@@ -101,6 +101,9 @@ class Main:
 
         self.load_video("/Users/robertonegro/Desktop/UniTN/Fundamentals of Image and Video Processing/video.mp4")
         QPixmapCache.setCacheLimit(1024*1024*1024)
+
+        self.appctxt.app.aboutToQuit.connect(self.about_to_quit)
+
         self.window.show()
 
         exit_code = self.appctxt.app.exec_()
@@ -242,6 +245,8 @@ class Main:
 
         self.play()
 
+    def about_to_quit(self):
+        self.video.destroy()
 
 if __name__ == '__main__':
     Main()

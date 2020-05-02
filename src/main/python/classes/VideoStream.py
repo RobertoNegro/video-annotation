@@ -217,6 +217,10 @@ class VideoStream(QObject):
 
     frame_drawn = Signal(QPixmap, int)
 
+    def destroy(self):
+        self.__render_thread.terminate()
+        self.__cache_thread.terminate()
+
     def __init__(self, filename: str, container: QLabel):
         super(VideoStream, self).__init__()
         self.__video = cv2.VideoCapture(filename)
@@ -252,5 +256,6 @@ class VideoStream(QObject):
 
         self.__render_thread.start()
         self.__cache_thread.start()
+
 
 
