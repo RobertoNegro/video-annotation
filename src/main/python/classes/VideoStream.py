@@ -1,3 +1,4 @@
+import logging
 import math
 import time
 from queue import Queue, Empty
@@ -8,6 +9,9 @@ import qimage2ndarray
 from PySide2.QtCore import QThread, QObject, Signal
 from PySide2.QtGui import QPixmap, QPixmapCache
 from PySide2.QtWidgets import QLabel
+
+
+logger = logging.getLogger('VideoStream')
 
 
 class VideoStream(QObject):
@@ -112,12 +116,12 @@ class VideoStream(QObject):
     def pause(self):
         if self.is_playing:
             self.__is_playing = False
-            print(f'Pause')
+            logger.info(f'Pause')
 
     def play(self):
         if not self.is_playing:
             self.__is_playing = True
-            print(f'Play')
+            logger.info(f'Play')
 
     def add_seconds(self, seconds):
         self.skip_to_frame(min(self.__render_index + self.__video_fps * seconds, self.__video_total_frames - 1))
@@ -134,13 +138,13 @@ class VideoStream(QObject):
     def refresh(self):
         self.skip_to_frame(self.__render_index)
 
-    def skip_to_frame(self, new_next_index):
+    def skip_to_frame(self, new_next_index, play_after_skip=False):
         if new_next_index < 0:
             new_next_index = 0
         elif new_next_index > self.__video_total_frames - 1:
             new_next_index = self.__video_total_frames - 1
 
-        print(f'Skipping to: {new_next_index}')
+        logger.info(f'Skipping to: {new_next_index}')
 
         self.__skip_lock.acquire()
         while not self.__cache.empty():
@@ -150,6 +154,7 @@ class VideoStream(QObject):
                 pass
 
         self.__skip_to = int(new_next_index)
+        self.__play_after_skip = play_after_skip
         self.__skip_lock.release()
 
     def set_speed(self, speed: float):
@@ -167,19 +172,23 @@ class VideoStream(QObject):
                 render_time = time.time()
                 self.__render_index = index
 
-                print(f'R {self.__render_index} ({QThread.currentThread().objectName()})')
+                logger.render(f'R {self.__render_index} ({QThread.currentThread().objectName()})')
 
                 self.frame_drawn.emit(frame, index)
 
-                while time.time() - render_time < interval:
-                   pass
+                while time.time() - render_time < interval and not self.__render_skip:
+                    pass
 
     def __cache_frame(self):
         while True:
             self.__skip_lock.acquire()
             if self.__skip_to is not None:
+                start_after_skip = self.__play_after_skip
+                self.__play_after_skip = False
+
                 self.__cache_next_index = self.__skip_to
                 self.__skip_to = None
+
                 self.__skip_lock.release()
 
                 self.__video.set(cv2.CAP_PROP_POS_FRAMES, self.__cache_next_index)
@@ -192,8 +201,11 @@ class VideoStream(QObject):
                     except Empty:
                         pass
 
-                print(f'C SKIP -> {self.__cache_next_index}, c flushed, r skip ({QThread.currentThread().objectName()})')
+                logger.cache(
+                    f'C SKIP -> {self.__cache_next_index}, c flushed, r skip ({QThread.currentThread().objectName()})')
                 self.__render_skip = True
+                if start_after_skip:
+                    self.__is_playing = True
             else:
                 self.__skip_lock.release()
                 self.__cache_next_index += 1
@@ -213,7 +225,7 @@ class VideoStream(QObject):
                 self.__cache_index = self.__cache_next_index
                 self.__cache.put((frame, self.__cache_index))
 
-                print(
+                logger.cache(
                     f'C {self.__cache_index}, {self.__cache.qsize()} in C ({QThread.currentThread().objectName()})')
 
     frame_drawn = Signal(QPixmap, int)
@@ -233,18 +245,19 @@ class VideoStream(QObject):
         self.__cache_next_index = 0
         self.__skip_lock = RLock()
         self.__skip_to = 0
+        self.__play_after_skip = False
         self.__render_skip = False
         self.__render_skip_lock = RLock()
-        self.__cache = Queue(10)
+        self.__cache = Queue(50)
 
         self.__video_fps = self.__video.get(cv2.CAP_PROP_FPS)
         self.__video_width = self.__video.get(cv2.CAP_PROP_FRAME_WIDTH)
         self.__video_height = self.__video.get(cv2.CAP_PROP_FRAME_HEIGHT)
         self.__video_total_frames = VideoStream.__get_video_total_frames(self.__video)
 
-        print(f'FPS: {self.__video_fps}')
-        print(f'Resolution: {self.__video_width} x {self.__video_height}')
-        print(f'Total frames: {self.__video_total_frames}')
+        logger.info(f'FPS: {self.__video_fps}')
+        logger.info(f'Resolution: {self.__video_width} x {self.__video_height}')
+        logger.info(f'Total frames: {self.__video_total_frames}')
 
         self.__speed = 1
 
@@ -259,6 +272,3 @@ class VideoStream(QObject):
 
         self.__render_thread.start()
         self.__cache_thread.start()
-
-
-

@@ -1,22 +1,18 @@
+import logging
 from threading import RLock
 
-import PySide2
-from PySide2.QtCore import QFile, QIODevice, QTimer, QEvent, Qt, QObject
-from PySide2.QtGui import QPixmap, QPixmapCache
-from PySide2.QtWidgets import QFileDialog, QLabel, QAction, QSlider, QPushButton, QGroupBox, QGraphicsView, \
-    QGraphicsScene
+from PySide2.QtCore import QFile, QIODevice, QEvent, QObject
+from PySide2.QtGui import QPixmapCache
+from PySide2.QtWidgets import QFileDialog, QLabel, QAction, QSlider, QPushButton, QGroupBox, QGraphicsView
 from fbs_runtime.application_context.PySide2 import ApplicationContext
 from PySide2.QtUiTools import QUiLoader
 
-import qimage2ndarray
-import cv2
 import sys
-import math
-import signal
 
 
 from classes.VideoStream import VideoStream
 
+logger = logging.getLogger('Main')
 
 class VideoEventFilter(QObject):
     def __init__(self, parent, main):
@@ -29,10 +25,9 @@ class VideoEventFilter(QObject):
             self.main.video.refresh()
             return True
         if event.type() == QEvent.MouseButtonPress:
-            print(self.main.video.get_video_coord(event.x(), event.y()))
+            logger.debug(f'Click on {self.main.video.get_video_coord(event.x(), event.y())}')
             return True
         if event.type() == QEvent.MouseButtonRelease:
-
             return True
         return False
 
@@ -44,13 +39,13 @@ class Main:
         ui_file_name = "ui/mainwindow.ui"
         ui_file = QFile(ui_file_name)
         if not ui_file.open(QIODevice.ReadOnly):
-            print("Cannot open {}: {}".format(ui_file_name, ui_file.errorString()))
+            logger.error("Cannot open {}: {}".format(ui_file_name, ui_file.errorString()))
             sys.exit(-1)
         loader = QUiLoader()
         self.window = loader.load(ui_file)
         ui_file.close()
         if not self.window:
-            print(loader.errorString())
+            logger.error(loader.errorString())
             sys.exit(-1)
 
         self.draw_mutex = RLock()
@@ -105,7 +100,7 @@ class Main:
         self.ui_lbl_video.installEventFilter(self.video_filter)
 
         self.load_video("/Users/robertonegro/Desktop/UniTN/Fundamentals of Image and Video Processing/video.mp4")
-        QPixmapCache.setCacheLimit(1024*1024*1024)
+        QPixmapCache.setCacheLimit(1024 * 1024 * 1024)
 
         self.appctxt.app.aboutToQuit.connect(self.about_to_quit)
 
@@ -146,9 +141,10 @@ class Main:
 
     def ui_slider_timeline_sliderReleased(self):
         self.ui_slider_timeline.valueChanged.disconnect()
-        self.ui_slider_timeline_valueChanged()
-        if self.was_playing:
-            self.play()
+        if self.video:
+            new_frame_index = self.ui_slider_timeline.value()
+            self.video.skip_to_frame(new_frame_index, play_after_skip=self.was_playing)
+
 
     def ui_btn_add5sec_clicked(self):
         if self.video:
@@ -207,6 +203,9 @@ class Main:
 
     def on_frame_drawn(self, frame, index):
         self.draw_mutex.acquire()
+
+        if self.video.is_playing:
+            self.ui_slider_timeline.setValue(self.video.get_frameindex)
 
         self.ui_lbl_video.setPixmap(frame)
         self.ui_grp_time.setTitle(f'Time: {self.video.get_timestamp} / {self.video.get_total_length}')
