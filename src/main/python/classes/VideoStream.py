@@ -131,6 +131,9 @@ class VideoStream(QObject):
     def remove_frames(self, frames):
         self.skip_to_frame(max(0, self.__render_index - frames))
 
+    def refresh(self):
+        self.skip_to_frame(self.__render_index)
+
     def skip_to_frame(self, new_next_index):
         if new_next_index < 0:
             new_next_index = 0

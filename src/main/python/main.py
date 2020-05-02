@@ -24,11 +24,15 @@ class VideoEventFilter(QObject):
         self.main = main
 
     def eventFilter(self, obj, event):
+        # print(event.type())
+        if event.type() == QEvent.Resize:
+            self.main.video.refresh()
+            return True
         if event.type() == QEvent.MouseButtonPress:
-            self.main.video.get_video_coord(event.x(), event.y())
+            print(self.main.video.get_video_coord(event.x(), event.y()))
             return True
         if event.type() == QEvent.MouseButtonRelease:
-            #print(f'Release coords: {event.x()} - {event.y()}')
+
             return True
         return False
 
@@ -49,6 +53,7 @@ class Main:
             print(loader.errorString())
             sys.exit(-1)
 
+        self.draw_mutex = RLock()
         self.video: VideoStream = None
 
         self.ui_grp_video: QGraphicsView = self.window.findChild(QGraphicsView, 'grp_video')
@@ -200,29 +205,14 @@ class Main:
             self.ui_lbl_speed.setText(f'{speed}x')
             self.video.set_speed(speed)
 
-    def get_video_total_frames(self):
-        # the count is sometimes bigger than the real
-        # number of valid frames contained in the video
-        index = self.video.get(cv2.CAP_PROP_FRAME_COUNT)
-        self.video.set(cv2.CAP_PROP_POS_FRAMES, index)
-        check = False
-        while not check:
-            check, frame = self.video.read()
-            if not check:
-                index -= 1
-                self.video.set(cv2.CAP_PROP_POS_FRAMES, index)
-        return index + 1
-
-    drawMutex = RLock()
-
     def on_frame_drawn(self, frame, index):
-        self.drawMutex.acquire()
+        self.draw_mutex.acquire()
 
         self.ui_lbl_video.setPixmap(frame)
         self.ui_grp_time.setTitle(f'Time: {self.video.get_timestamp} / {self.video.get_total_length}')
         self.ui_grp_frame.setTitle(f'Frame: {self.video.get_frameindex + 1} / {self.video.get_total_frames}')
 
-        self.drawMutex.release()
+        self.draw_mutex.release()
 
     def ui_action_load_video_triggered(self):
         filename, file_filter = QFileDialog.getOpenFileName(parent=self.window,
@@ -247,6 +237,7 @@ class Main:
 
     def about_to_quit(self):
         self.video.destroy()
+
 
 if __name__ == '__main__':
     Main()
