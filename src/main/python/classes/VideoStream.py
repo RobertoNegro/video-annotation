@@ -164,14 +164,12 @@ class VideoStream(QObject):
                 render_time = time.time()
                 self.__render_index = index
 
-                print(f'Display frame {self.__render_index}')
+                print(f'R {self.__render_index} ({QThread.currentThread().objectName()})')
 
                 self.frame_drawn.emit(frame, index)
-                #if self.__on_frame_handler:
-                #    self.__on_frame_handler()
 
                 while time.time() - render_time < interval:
-                    pass
+                   pass
 
     def __cache_frame(self):
         while True:
@@ -191,7 +189,7 @@ class VideoStream(QObject):
                     except Empty:
                         pass
 
-                print(f'VideoStream skipped to {self.__cache_next_index} (empty cache, causing render skip)')
+                print(f'C SKIP -> {self.__cache_next_index}, c flushed, r skip ({QThread.currentThread().objectName()})')
                 self.__render_skip = True
             else:
                 self.__skip_lock.release()
@@ -213,7 +211,7 @@ class VideoStream(QObject):
                 self.__cache.put((frame, self.__cache_index))
 
                 print(
-                    f'Cached frame {self.__cache_index} (Next: {self.__cache_next_index} - Size: {self.__cache.qsize()})')
+                    f'C {self.__cache_index}, {self.__cache.qsize()} in C ({QThread.currentThread().objectName()})')
 
     frame_drawn = Signal(QPixmap, int)
 
@@ -250,8 +248,10 @@ class VideoStream(QObject):
         # self.__render_thread = Thread(target=self.__render_frame, args=())
         # self.__cache_thread = Thread(target=self.__cache_frame, args=())
         self.__render_thread = QThread()
+        self.__render_thread.setObjectName('RenderThread')
         self.__render_thread.run = self.__render_frame
         self.__cache_thread = QThread()
+        self.__cache_thread.setObjectName('CacheThread')
         self.__cache_thread.run = self.__cache_frame
 
         self.__render_thread.start()
