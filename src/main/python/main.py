@@ -9,10 +9,11 @@ from PySide2.QtUiTools import QUiLoader
 
 import sys
 
-
 from classes.VideoStream import VideoStream
+from classes.shape.Rectangle import Rectangle
 
 logger = logging.getLogger('Main')
+
 
 class VideoEventFilter(QObject):
     def __init__(self, parent, main):
@@ -21,14 +22,52 @@ class VideoEventFilter(QObject):
 
     def eventFilter(self, obj, event):
         # print(event.type())
+
         if event.type() == QEvent.Resize:
             self.main.video.refresh()
             return True
-        if event.type() == QEvent.MouseButtonPress:
-            logger.debug(f'Click on {self.main.video.get_video_coord(event.x(), event.y())}')
+
+        elif event.type() == QEvent.MouseButtonPress:
+            x, y = self.main.video.get_video_coord(event.x(), event.y())
+            logger.debug(f'Click on ({x}, {y})')
+
+            if self.main.is_drawing_rectangle:
+                self.main.is_drawing_rectangle_clicked = True
+                self.main.drawing_rectangle = Rectangle(x, y, None, None)
+
+                logger.debug(f'Drawing rectangle: {self.main.drawing_rectangle.to_json()}')
+                self.main.video.clear_modifiers()
+                self.main.video.modifiers_draw_rect(self.main.drawing_rectangle)
+                self.main.video.refresh()
             return True
-        if event.type() == QEvent.MouseButtonRelease:
+
+        elif event.type() == QEvent.MouseMove:
+            x, y = self.main.video.get_video_coord(event.x(), event.y())
+            #logger.spam(f'Move on ({x}, {y})')
+
+            if self.main.is_drawing_rectangle:
+                if self.main.is_drawing_rectangle_clicked and self.main.drawing_rectangle is not None:
+                    self.main.drawing_rectangle.bottom_right = (x, y)
+                    #logger.spam(f'Drawing rectangle: {self.main.drawing_rectangle.to_json()}')
+                    self.main.video.clear_modifiers()
+                    self.main.video.modifiers_draw_rect(self.main.drawing_rectangle)
+                    self.main.video.refresh()
             return True
+
+        elif event.type() == QEvent.MouseButtonRelease:
+            x, y = self.main.video.get_video_coord(event.x(), event.y())
+            logger.debug(f'Release on ({x}, {y})')
+
+            if self.main.is_drawing_rectangle:
+                self.main.is_drawing_rectangle_clicked = False
+                if self.main.drawing_rectangle is not None:
+                    self.main.drawing_rectangle.bottom_right = (x, y)
+                    logger.debug(f'Drawing rectangle: {self.main.drawing_rectangle.to_json()}')
+                    self.main.video.clear_modifiers()
+                    self.main.video.modifiers_draw_rect(self.main.drawing_rectangle)
+                    self.main.video.refresh()
+            return True
+
         return False
 
 
@@ -74,6 +113,11 @@ class Main:
         self.ui_grp_time: QGroupBox = self.window.findChild(QGroupBox, 'grp_time')
         self.ui_grp_frame: QGroupBox = self.window.findChild(QGroupBox, 'grp_frame')
 
+        self.ui_btn_shape_global: QPushButton = self.window.findChild(QPushButton, 'btn_shape_global')
+        self.ui_btn_shape_rectangle: QPushButton = self.window.findChild(QPushButton, 'btn_shape_rectangle')
+        self.ui_btn_shape_ellipse: QPushButton = self.window.findChild(QPushButton, 'btn_shape_ellipse')
+        self.ui_btn_shape_polygon: QPushButton = self.window.findChild(QPushButton, 'btn_shape_polygon')
+
         self.was_playing = False
         self.ui_action_load_video.triggered.connect(self.ui_action_load_video_triggered)
         self.ui_slider_speed.valueChanged.connect(self.ui_slider_speed_valueChanged)
@@ -94,6 +138,11 @@ class Main:
         self.ui_slider_timeline.sliderPressed.connect(self.ui_slider_timeline_sliderPressed)
         self.ui_slider_timeline.sliderReleased.connect(self.ui_slider_timeline_sliderReleased)
 
+        self.ui_btn_shape_global.clicked.connect(self.ui_btn_shape_global_clicked)
+        self.ui_btn_shape_rectangle.clicked.connect(self.ui_btn_shape_rectangle_clicked)
+        self.ui_btn_shape_ellipse.clicked.connect(self.ui_btn_shape_ellipse_clicked)
+        self.ui_btn_shape_polygon.clicked.connect(self.ui_btn_shape_polygon_clicked)
+
         self.ui_lbl_video.setMouseTracking(True)
         self.ui_lbl_video.setEnabled(True)
         self.video_filter = VideoEventFilter(self.ui_lbl_video, self)
@@ -102,12 +151,62 @@ class Main:
         self.load_video("/Users/robertonegro/Desktop/UniTN/Fundamentals of Image and Video Processing/video.mp4")
         QPixmapCache.setCacheLimit(1024 * 1024 * 1024)
 
+        self.is_drawing_rectangle = False
+        self.is_drawing_rectangle_clicked = False
+        self.drawing_rectangle = None
+        self.is_drawing_ellipse = False
+        self.drawing_ellipse = None
+        self.is_drawing_polygon = False
+        self.drawing_polygon = None
+
         self.appctxt.app.aboutToQuit.connect(self.about_to_quit)
 
         self.window.show()
 
         exit_code = self.appctxt.app.exec_()
         sys.exit(exit_code)
+
+    def reset_shaping(self):
+        self.is_drawing_rectangle = False
+        self.is_drawing_rectangle_clicked = False
+        self.drawing_rectangle = None
+        self.is_drawing_ellipse = False
+        self.drawing_ellipse = None
+        self.is_drawing_polygon = False
+        self.drawing_polygon = None
+
+    def ui_btn_shape_global_clicked(self):
+        if self.video:
+            self.reset_shaping()
+            self.pause()
+            self.video.clear_modifiers()
+            self.video.modifiers_draw_global()
+            self.video.refresh()
+
+    def ui_btn_shape_rectangle_clicked(self):
+        if self.video:
+            self.reset_shaping()
+            self.pause()
+            self.video.clear_modifiers()
+            self.video.refresh()
+            self.drawing_rectangle = None
+            self.is_drawing_rectangle = True
+
+    def ui_btn_shape_ellipse_clicked(self):
+        if self.video:
+            self.reset_shaping()
+            self.pause()
+            self.video.clear_modifiers()
+            self.video.modifiers_draw_global()
+            self.video.refresh()
+
+    def ui_btn_shape_polygon_clicked(self):
+        if self.video:
+            self.reset_shaping()
+            self.pause()
+            self.video.clear_modifiers()
+            self.video.modifiers_draw_global()
+            self.video.refresh()
 
     def ui_btn_play_clicked(self):
         if self.video:
@@ -144,7 +243,6 @@ class Main:
         if self.video:
             new_frame_index = self.ui_slider_timeline.value()
             self.video.skip_to_frame(new_frame_index, play_after_skip=self.was_playing)
-
 
     def ui_btn_add5sec_clicked(self):
         if self.video:

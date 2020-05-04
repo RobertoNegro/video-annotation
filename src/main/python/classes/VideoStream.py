@@ -1,8 +1,9 @@
+import copy
 import logging
 import math
 import time
 from queue import Queue, Empty
-from threading import RLock, Thread
+from threading import RLock, Thread, Condition, Lock
 
 import cv2
 import qimage2ndarray
@@ -10,6 +11,9 @@ from PySide2.QtCore import QThread, QObject, Signal
 from PySide2.QtGui import QPixmap, QPixmapCache
 from PySide2.QtWidgets import QLabel
 
+from classes.shape import Polygon
+from classes.shape.Ellipse import Ellipse
+from classes.shape.Rectangle import Rectangle
 
 logger = logging.getLogger('VideoStream')
 
@@ -21,16 +25,6 @@ class VideoStream(QObject):
         minutes = math.floor(frame / fps / 60) - hours * 60
         seconds = math.floor(frame / fps) - hours * 60 * 60 - minutes * 60
         return f'{hours:02d}:{minutes:02d}:{seconds:02d}'
-
-    @staticmethod
-    def __frame_draw_global(frame, area_width, area_height):
-        cv2.rectangle(frame, (0, 0), (area_width, area_height), (0, 0, 255), 3)
-        return frame
-
-    @staticmethod
-    def __frame_draw_border(frame, frame_index):
-        cv2.putText(frame, f"{int(frame_index)}", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255))
-        return frame
 
     @staticmethod
     def __get_resized_size(area_width, area_height, video_width, video_height):
@@ -64,7 +58,6 @@ class VideoStream(QObject):
         number of valid frames contained in the video
         :return: The total number of valid frames
         """
-
         index = video.get(cv2.CAP_PROP_FRAME_COUNT)
         video.set(cv2.CAP_PROP_POS_FRAMES, index)
         check = False
@@ -73,6 +66,7 @@ class VideoStream(QObject):
             if not check:
                 index -= 1
                 video.set(cv2.CAP_PROP_POS_FRAMES, index)
+        video.set(cv2.CAP_PROP_POS_FRAMES, 0)
         return int(index + 1)
 
     @property
@@ -136,29 +130,127 @@ class VideoStream(QObject):
         self.skip_to_frame(max(0, self.__render_index - frames))
 
     def refresh(self):
+        logger.info(f'Refreshing render')
         self.skip_to_frame(self.__render_index)
 
+    def clear_modifiers(self):
+        self.__frame_modifiers.clear()
+
+    def modifiers_draw_global(self):
+        def modifier(frame):
+            cv2.rectangle(frame, (0, 0), (int(self.__video_width), int(self.__video_height)), (0, 0, 255), 3)
+            return frame
+
+        self.__frame_modifiers.append(modifier)
+
+    def modifiers_draw_polygon(self, polygon: Polygon):
+        def modifier(frame):
+            if len(polygon.points) > 1:
+                for i, p in enumerate(polygon.points):
+                    x1, y1 = polygon.points[i], polygon.points[i]
+                    if i == len(polygon.points) - 1:
+                        color = (0, 0, 255)
+                        x2, y2 = polygon.points[0], polygon.points[0]
+                    else:
+                        color = (255, 0, 0)
+                        x2, y2 = polygon.points[i + 1], polygon.points[i + 1]
+                    cv2.line(frame, (x1, y1), (x2, y2), color, 3)
+
+            return frame
+
+        self.__frame_modifiers.append(modifier)
+
+    def modifiers_draw_ellipse(self, ellipse: Ellipse):
+        def modifier(frame):
+            cv2.ellipse(frame, ellipse.center, ellipse.size, 0, 0, 360, (0, 0, 255), 3)
+            return frame
+
+        self.__frame_modifiers.append(modifier)
+
+    def modifiers_draw_rect(self, rectangle: Rectangle):
+        if None not in rectangle.top_left and None not in rectangle.bottom_right:
+            def modifier(frame):
+                cv2.rectangle(frame, rectangle.top_left, rectangle.bottom_right, (0, 0, 255), 3)
+                return frame
+
+            self.__frame_modifiers.append(modifier)
+
     def skip_to_frame(self, new_next_index, play_after_skip=False):
-        if new_next_index < 0:
-            new_next_index = 0
-        elif new_next_index > self.__video_total_frames - 1:
-            new_next_index = self.__video_total_frames - 1
-
+        self.__skip_condition.acquire()
+        self.__skip_to = new_next_index
+        self.__skip_play_after = play_after_skip
+        self.__skip_condition.notify()
+        self.__skip_condition.release()
         logger.info(f'Skipping to: {new_next_index}')
-
-        self.__skip_lock.acquire()
-        while not self.__cache.empty():
-            try:
-                self.__cache.get_nowait()
-            except Empty:
-                pass
-
-        self.__skip_to = int(new_next_index)
-        self.__play_after_skip = play_after_skip
-        self.__skip_lock.release()
 
     def set_speed(self, speed: float):
         self.__speed = speed
+
+    def __skip_frame(self):
+        while True:
+            self.__skip_condition.acquire()
+            self.__skip_condition.wait()
+            if self.__skip_to is not None:
+                new_next_index = self.__skip_to
+                play_after_skip = self.__skip_play_after
+                self.__skip_to = None
+                self.__skip_play_after = False
+                self.__skip_condition.release()
+
+                if new_next_index < 0:
+                    new_next_index = 0
+                elif new_next_index > self.__video_total_frames - 1:
+                    new_next_index = self.__video_total_frames - 1
+                new_next_index = int(new_next_index)
+
+                logger.info(f'S -> {new_next_index} (play after: {play_after_skip})')
+
+                self.__caching_lock.acquire()
+                self.__rendering_lock.acquire()
+
+                self.__cache_next_index = new_next_index
+                is_refresh = self.__cache_next_index == self.__render_index
+                if is_refresh:
+                    previous_refresh_cache = self.__refresh_cache
+                    dim = 1
+                    dim += self.__cache.qsize()
+                    dim += 0 if previous_refresh_cache is None else previous_refresh_cache.qsize()
+
+                    self.__refresh_cache = Queue(dim)
+                    self.__refresh_cache.put(self.__render_original)
+                    while not self.__cache.empty():
+                        try:
+                            _, original_frame, _ = self.__cache.get_nowait()
+                            self.__refresh_cache.put(original_frame)
+                        except Empty:
+                            pass
+                    if previous_refresh_cache is not None:
+                        while not previous_refresh_cache.empty():
+                            try:
+                                frame = previous_refresh_cache.get_nowait()
+                                self.__refresh_cache.put(frame)
+                            except Empty:
+                                pass
+
+                else:
+                    while not self.__cache.empty():
+                        try:
+                            self.__cache.get_nowait()
+                        except Empty:
+                            pass
+                    self.__refresh_cache = None
+
+                    self.__video.set(cv2.CAP_PROP_POS_FRAMES, self.__cache_next_index)
+
+                self.__render_skip = True
+
+                if play_after_skip:
+                    self.__is_playing = play_after_skip
+
+                self.__caching_lock.release()
+                self.__rendering_lock.release()
+            else:
+                self.__skip_condition.release()
 
     def __render_frame(self):
         frame = None
@@ -167,66 +259,64 @@ class VideoStream(QObject):
             interval = 0.016 if interval < 0.016 else interval
 
             if frame is None or self.__is_playing or self.__render_skip:
-                self.__render_skip = False
-                frame, index = self.__cache.get()
+                self.__rendering_lock.acquire()
+                if self.__render_skip:
+                    self.__render_skip = False
+
+                frame, frame_original, index = self.__cache.get()
                 render_time = time.time()
                 self.__render_index = index
+                self.__render_original = frame_original
 
                 logger.render(f'R {self.__render_index} ({QThread.currentThread().objectName()})')
-
                 self.frame_drawn.emit(frame, index)
 
+                self.__rendering_lock.release()
                 while time.time() - render_time < interval and not self.__render_skip:
                     pass
 
     def __cache_frame(self):
         while True:
-            self.__skip_lock.acquire()
-            if self.__skip_to is not None:
-                start_after_skip = self.__play_after_skip
-                self.__play_after_skip = False
+            if not self.__cache.full():
+                self.__caching_lock.acquire()
 
-                self.__cache_next_index = self.__skip_to
-                self.__skip_to = None
+                if self.__refresh_cache is not None and not self.__refresh_cache.empty():
+                    check = True
+                    frame = self.__refresh_cache.get()
+                    is_refresh = True
+                else:
+                    video_frame = int(self.__video.get(cv2.CAP_PROP_POS_FRAMES))
+                    if self.__cache_next_index != video_frame:
+                        logger.warning(f'Misalignment: {self.__cache_next_index} -> {video_frame}')
+                        self.__video.set(cv2.CAP_PROP_POS_FRAMES, self.__cache_next_index)
+                    check, frame = self.__video.read()
+                    is_refresh = False
 
-                self.__skip_lock.release()
+                if check:
+                    frame_original = frame.copy()
 
-                self.__video.set(cv2.CAP_PROP_POS_FRAMES, self.__cache_next_index)
+                    resized_w, resized_h = VideoStream.__get_resized_size(self.__container.frameGeometry().width(),
+                                                                          self.__container.frameGeometry().height(),
+                                                                          self.__video_width,
+                                                                          self.__video_height)
 
-                # Clean again because, if queue full, after cleaning in skip_to_frame will be added
-                # one more spurious frame from the previous stream that was waiting on queue.put()
-                while not self.__cache.empty():
-                    try:
-                        self.__cache.get_nowait()
-                    except Empty:
-                        pass
+                    for modifier in self.__frame_modifiers:
+                        frame = modifier(frame)
 
-                logger.cache(
-                    f'C SKIP -> {self.__cache_next_index}, c flushed, r skip ({QThread.currentThread().objectName()})')
-                self.__render_skip = True
-                if start_after_skip:
-                    self.__is_playing = True
-            else:
-                self.__skip_lock.release()
-                self.__cache_next_index += 1
+                    frame = VideoStream.__frame_resize(frame, resized_w, resized_h)
 
-            check, frame = self.__video.read()
-            if check:
-                resized_w, resized_h = VideoStream.__get_resized_size(self.__container.frameGeometry().width(),
-                                                                      self.__container.frameGeometry().height(),
-                                                                      self.__video_width,
-                                                                      self.__video_height)
+                    frame = VideoStream.__frame_convert_colors(frame)
+                    frame = VideoStream.__frame_to_qpixmap(frame)
 
-                frame = VideoStream.__frame_resize(frame, resized_w, resized_h)
-                frame = VideoStream.__frame_draw_global(frame, resized_w, resized_h)
-                frame = VideoStream.__frame_convert_colors(frame)
-                frame = VideoStream.__frame_to_qpixmap(frame)
+                    self.__cache_index = self.__cache_next_index
+                    self.__cache_next_index += 1
 
-                self.__cache_index = self.__cache_next_index
-                self.__cache.put((frame, self.__cache_index))
+                    self.__caching_lock.release()
 
-                logger.cache(
-                    f'C {self.__cache_index}, {self.__cache.qsize()} in C ({QThread.currentThread().objectName()})')
+                    self.__cache.put((frame, frame_original, self.__cache_index))
+                    cached_txt = '(prev. cached original frame)' if is_refresh else ''
+                    logger.cache(
+                        f'C {self.__cache_index}, {self.__cache.qsize()} in C ({QThread.currentThread().objectName()}) {cached_txt}')
 
     frame_drawn = Signal(QPixmap, int)
 
@@ -239,16 +329,7 @@ class VideoStream(QObject):
         self.__video = cv2.VideoCapture(filename)
         self.__container = container
 
-        self.__is_playing = False
-        self.__render_index = 0
-        self.__cache_index = 0
-        self.__cache_next_index = 0
-        self.__skip_lock = RLock()
-        self.__skip_to = 0
-        self.__play_after_skip = False
-        self.__render_skip = False
-        self.__render_skip_lock = RLock()
-        self.__cache = Queue(50)
+        self.__frame_modifiers = []
 
         self.__video_fps = self.__video.get(cv2.CAP_PROP_FPS)
         self.__video_width = self.__video.get(cv2.CAP_PROP_FRAME_WIDTH)
@@ -261,14 +342,34 @@ class VideoStream(QObject):
 
         self.__speed = 1
 
-        # self.__render_thread = Thread(target=self.__render_frame, args=())
-        # self.__cache_thread = Thread(target=self.__cache_frame, args=())
+        self.__rendering_lock = RLock()
+        self.__is_playing = False
+        self.__render_index = -1
+        self.__render_original = None
+        self.__render_skip = False
+
+        self.__caching_lock = RLock()
+        self.__cache_index = -1
+        self.__cache_next_index = 0
+        self.__cache = Queue(5)
+
+        self.__skip_to = None
+        self.__skip_play_after = False
+        self.__skip_condition = Condition()
+        self.__refresh_cache = None
+
         self.__render_thread = QThread()
         self.__render_thread.setObjectName('RenderThread')
         self.__render_thread.run = self.__render_frame
+
         self.__cache_thread = QThread()
         self.__cache_thread.setObjectName('CacheThread')
         self.__cache_thread.run = self.__cache_frame
 
+        self.__skip_thread = QThread()
+        self.__skip_thread.setObjectName('SkipThread')
+        self.__skip_thread.run = self.__skip_frame
+
         self.__render_thread.start()
         self.__cache_thread.start()
+        self.__skip_thread.start()
