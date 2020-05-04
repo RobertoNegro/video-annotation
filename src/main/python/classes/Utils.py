@@ -1,12 +1,6 @@
-from threading import Lock
+from pygments import highlight, lexers, formatters
 
-def synchronized_with_attr(lock_name):
-    def decorator(method):
-        def synced_method(self, *args, **kws):
-            lock = getattr(self, lock_name)
-            with lock:
-                return method(self, *args, **kws)
 
-        return synced_method
-
-    return decorator
+def json_to_html(json):
+    return highlight(json, lexers.JsonLexer(),
+                     formatters.HtmlFormatter()) + '<style>' + formatters.HtmlFormatter().get_style_defs() + '</style>'

@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1159</width>
-    <height>833</height>
+    <width>1040</width>
+    <height>724</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -584,7 +584,7 @@ color: rgb(255, 255, 255);</string>
             </layout>
            </item>
            <item>
-            <widget class="QTreeView" name="tree_shape">
+            <widget class="QWebEngineView" name="web_json_shape">
              <property name="sizePolicy">
               <sizepolicy hsizetype="Expanding" vsizetype="Minimum">
                <horstretch>0</horstretch>
@@ -602,6 +602,11 @@ color: rgb(255, 255, 255);</string>
                <width>16777215</width>
                <height>100</height>
               </size>
+             </property>
+             <property name="url">
+              <url>
+               <string>about:blank</string>
+              </url>
              </property>
             </widget>
            </item>
@@ -697,7 +702,7 @@ color: rgb(255, 255, 255);</string>
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>1159</width>
+     <width>1040</width>
      <height>22</height>
     </rect>
    </property>
@@ -728,6 +733,13 @@ color: rgb(255, 255, 255);</string>
    </property>
   </action>
  </widget>
+ <customwidgets>
+  <customwidget>
+   <class>QWebEngineView</class>
+   <extends>QWidget</extends>
+   <header location="global">QtWebEngineWidgets/QWebEngineView</header>
+  </customwidget>
+ </customwidgets>
  <resources/>
  <connections/>
 </ui>

@@ -41,6 +41,7 @@ level_styles = dict(
     critical=dict(color='red', bold=CAN_USE_BOLD_FONT))
 
 
+add_logging_event('SKIP', 3)
 add_logging_event('RENDER', 2)
 add_logging_event('CACHE', 1)
-coloredlogs.install(level=logging.CACHE, milliseconds=True, level_styles=level_styles)
+coloredlogs.install(level=logging.DEBUG, milliseconds=True, level_styles=level_styles)

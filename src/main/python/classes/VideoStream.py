@@ -1,19 +1,16 @@
-import copy
 import logging
 import math
 import time
 from queue import Queue, Empty
-from threading import RLock, Thread, Condition, Lock
+from threading import RLock, Condition
 
 import cv2
 import qimage2ndarray
 from PySide2.QtCore import QThread, QObject, Signal
-from PySide2.QtGui import QPixmap, QPixmapCache
+from PySide2.QtGui import QPixmap
 from PySide2.QtWidgets import QLabel
 
-from classes.shape import Polygon
-from classes.shape.Ellipse import Ellipse
-from classes.shape.Rectangle import Rectangle
+from classes.Shape import Shape, ShapeType
 
 logger = logging.getLogger('VideoStream')
 
@@ -130,50 +127,86 @@ class VideoStream(QObject):
         self.skip_to_frame(max(0, self.__render_index - frames))
 
     def refresh(self):
-        logger.info(f'Refreshing render')
+        logger.render(f'Refreshing render')
         self.skip_to_frame(self.__render_index)
 
     def clear_modifiers(self):
+        self.__frame_modifiers_lock.acquire()
         self.__frame_modifiers.clear()
+        self.__frame_modifiers_lock.release()
 
-    def modifiers_draw_global(self):
-        def modifier(frame):
-            cv2.rectangle(frame, (0, 0), (int(self.__video_width), int(self.__video_height)), (0, 0, 255), 3)
-            return frame
+    def remove_modifier(self, shape: Shape):
+        self.__frame_modifiers_lock.acquire()
+        if shape.id in self.__frame_modifiers:
+            del self.__frame_modifiers[shape.id]
+        self.__frame_modifiers_lock.release()
 
-        self.__frame_modifiers.append(modifier)
-
-    def modifiers_draw_polygon(self, polygon: Polygon):
-        def modifier(frame):
-            if len(polygon.points) > 1:
-                for i, p in enumerate(polygon.points):
-                    x1, y1 = polygon.points[i], polygon.points[i]
-                    if i == len(polygon.points) - 1:
-                        color = (0, 0, 255)
-                        x2, y2 = polygon.points[0], polygon.points[0]
-                    else:
-                        color = (255, 0, 0)
-                        x2, y2 = polygon.points[i + 1], polygon.points[i + 1]
-                    cv2.line(frame, (x1, y1), (x2, y2), color, 3)
-
-            return frame
-
-        self.__frame_modifiers.append(modifier)
-
-    def modifiers_draw_ellipse(self, ellipse: Ellipse):
-        def modifier(frame):
-            cv2.ellipse(frame, ellipse.center, ellipse.size, 0, 0, 360, (0, 0, 255), 3)
-            return frame
-
-        self.__frame_modifiers.append(modifier)
-
-    def modifiers_draw_rect(self, rectangle: Rectangle):
-        if None not in rectangle.top_left and None not in rectangle.bottom_right:
+    def add_modifier(self, shape: Shape):
+        if shape.shape == ShapeType.globals:
             def modifier(frame):
-                cv2.rectangle(frame, rectangle.top_left, rectangle.bottom_right, (0, 0, 255), 3)
+                cv2.rectangle(frame, (0, 0), (int(self.__video_width), int(self.__video_height)), (0, 0, 255), 3)
                 return frame
+        elif shape.shape == ShapeType.pointer:
+            def modifier(frame):
+                if len(shape.points) >= 1:
+                    x, y = shape.points[0]
+                    if None not in (x, y):
+                        cv2.line(frame, (x, 0), (x, int(self.__video_height)), (64, 64, 64), 3)
+                        cv2.line(frame, (0, y), (int(self.__video_width), y), (64, 64, 64), 3)
+                return frame
+        elif shape.shape == ShapeType.ellipse:
+            def modifier(frame):
+                if len(shape.points) >= 2:
+                    x1, y1 = shape.points[0]
+                    x2, y2 = shape.points[1]
+                    if None not in (x1, y1, x2, y2):
+                        centerx = int((x1 + x2) / 2)
+                        centery = int((y1 + y2) / 2)
+                        sizex = int(abs(x1 - centerx))
+                        sizey = int(abs(y1 - centery))
 
-            self.__frame_modifiers.append(modifier)
+                        cv2.ellipse(frame, (centerx, centery), (sizex, sizey), 0, 0, 360, (0, 0, 255), 3)
+                elif len(shape.points) == 1:
+                    x, y = shape.points[0]
+                    cv2.ellipse(frame, (x, y), (2, 2), 0, 0, 360, (0, 0, 255), 3)
+                return frame
+        elif shape.shape == ShapeType.rectangle:
+            def modifier(frame):
+                if len(shape.points) >= 2:
+                    x1, y1 = shape.points[0]
+                    x2, y2 = shape.points[1]
+                    if None not in (x1, y1, x2, y2):
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 3)
+                elif len(shape.points) == 1:
+                    x, y = shape.points[0]
+                    cv2.ellipse(frame, (x, y), (2, 2), 0, 0, 360, (0, 0, 255), 3)
+                return frame
+        elif shape.shape == ShapeType.polygon:
+            def modifier(frame):
+                if len(shape.points) > 1:
+                    for i, p in enumerate(shape.points):
+                        x1, y1 = shape.points[i]
+                        if i == len(shape.points) - 1:
+                            color = (0, 0, 255)
+                            x2, y2 = shape.points[0]
+                        else:
+                            color = (255, 0, 0)
+                            x2, y2 = shape.points[i + 1]
+
+                        cv2.line(frame, (x1, y1), (x2, y2), color, 3)
+                elif len(shape.points) == 1:
+                    x, y = shape.points[0]
+                    cv2.ellipse(frame, (x, y), (2, 2), 0, 0, 360, (0, 0, 255), 3)
+
+                return frame
+        else:
+            def modifier(frame):
+                return frame
+            logger.warning(f'Unknown shape while trying to add a new modifier: {shape.shape}')
+
+        self.__frame_modifiers_lock.acquire()
+        self.__frame_modifiers[shape.id] = modifier
+        self.__frame_modifiers_lock.release()
 
     def skip_to_frame(self, new_next_index, play_after_skip=False):
         self.__skip_condition.acquire()
@@ -181,7 +214,7 @@ class VideoStream(QObject):
         self.__skip_play_after = play_after_skip
         self.__skip_condition.notify()
         self.__skip_condition.release()
-        logger.info(f'Skipping to: {new_next_index}')
+        logger.skip(f'Skipping to: {new_next_index}')
 
     def set_speed(self, speed: float):
         self.__speed = speed
@@ -203,7 +236,7 @@ class VideoStream(QObject):
                     new_next_index = self.__video_total_frames - 1
                 new_next_index = int(new_next_index)
 
-                logger.info(f'S -> {new_next_index} (play after: {play_after_skip})')
+                logger.skip(f'S -> {new_next_index} (play after: {play_after_skip})')
 
                 self.__caching_lock.acquire()
                 self.__rendering_lock.acquire()
@@ -300,8 +333,10 @@ class VideoStream(QObject):
                                                                           self.__video_width,
                                                                           self.__video_height)
 
+                    self.__frame_modifiers_lock.acquire()
                     for modifier in self.__frame_modifiers:
-                        frame = modifier(frame)
+                        frame = self.__frame_modifiers[modifier](frame)
+                    self.__frame_modifiers_lock.release()
 
                     frame = VideoStream.__frame_resize(frame, resized_w, resized_h)
 
@@ -323,13 +358,15 @@ class VideoStream(QObject):
     def destroy(self):
         self.__render_thread.terminate()
         self.__cache_thread.terminate()
+        self.__skip_thread.terminate()
 
     def __init__(self, filename: str, container: QLabel):
         super(VideoStream, self).__init__()
         self.__video = cv2.VideoCapture(filename)
         self.__container = container
 
-        self.__frame_modifiers = []
+        self.__frame_modifiers = dict()
+        self.__frame_modifiers_lock = RLock()
 
         self.__video_fps = self.__video.get(cv2.CAP_PROP_FPS)
         self.__video_width = self.__video.get(cv2.CAP_PROP_FRAME_WIDTH)
