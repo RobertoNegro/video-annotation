@@ -126,9 +126,9 @@ class VideoStream(QObject):
     def remove_frames(self, frames):
         self.skip_to_frame(max(0, self.__render_index - frames))
 
-    def refresh(self):
+    def refresh(self, play_after_refresh=False):
         logger.render(f'Refreshing render')
-        self.skip_to_frame(self.__render_index)
+        self.skip_to_frame(self.__render_index, play_after_skip=play_after_refresh)
 
     def clear_modifiers(self):
         self.__frame_modifiers_lock.acquire()
@@ -228,13 +228,14 @@ class VideoStream(QObject):
                 play_after_skip = self.__skip_play_after
                 self.__skip_to = None
                 self.__skip_play_after = False
-                self.__skip_condition.release()
 
                 if new_next_index < 0:
                     new_next_index = 0
                 elif new_next_index > self.__video_total_frames - 1:
                     new_next_index = self.__video_total_frames - 1
                 new_next_index = int(new_next_index)
+
+                self.__skip_condition.release()
 
                 logger.skip(f'S -> {new_next_index} (play after: {play_after_skip})')
 
@@ -279,7 +280,6 @@ class VideoStream(QObject):
 
                 if play_after_skip:
                     self.__is_playing = play_after_skip
-
                 self.__caching_lock.release()
                 self.__rendering_lock.release()
             else:

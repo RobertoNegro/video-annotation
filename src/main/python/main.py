@@ -5,7 +5,8 @@ from PySide2.QtWebEngineWidgets import QWebEngineView
 
 from PySide2.QtCore import QFile, QIODevice, QEvent, QObject, Qt
 from PySide2.QtGui import QPixmapCache
-from PySide2.QtWidgets import QFileDialog, QLabel, QAction, QSlider, QPushButton, QGroupBox, QGraphicsView
+from PySide2.QtWidgets import QFileDialog, QLabel, QAction, QSlider, QPushButton, QGroupBox, QGraphicsView, QListWidget, \
+    QLineEdit
 from fbs_runtime.application_context.PySide2 import ApplicationContext
 from PySide2.QtUiTools import QUiLoader
 
@@ -27,21 +28,23 @@ class VideoEventFilter(QObject):
         # logger.debug(event.type())
 
         if event.type() == QEvent.Resize:
-            self.main.video.refresh()
+            if self.main.video:
+                self.main.video.refresh()
             return True
 
-        if not self.main.video.is_playing:
+        if self.main.video is not None and not self.main.video.is_playing:
             if event.type() == QEvent.Leave:
-                self.main.hide_pointer()
+                if self.main.drawing_shape is not None:
+                    self.main.hide_pointer()
                 return True
 
             if event.type() == QEvent.MouseButtonPress:
                 x, y = self.main.video.get_video_coord(event.x(), event.y())
                 logger.debug(f'Click on ({x}, {y})')
-
                 if event.button() == Qt.MouseButton.LeftButton:
                     self.main.video_pressed = True
-                    self.main.hide_pointer(refresh=False)
+                    if self.main.drawing_shape is not None:
+                        self.main.hide_pointer(refresh=False)
 
                 if self.main.drawing_shape is not None:
                     if event.button() == Qt.MouseButton.LeftButton:
@@ -50,30 +53,31 @@ class VideoEventFilter(QObject):
                         self.main.drawing_shape.add_point(x, y)
                     else:
                         self.main.drawing_shape.remove_last()
-
-                self.main.update_shape()
+                    self.main.update_shape()
                 return True
 
             if event.type() == QEvent.MouseMove or event.type() == QEvent.MouseButtonRelease:
                 x, y = self.main.video.get_video_coord(event.x(), event.y())
 
-                self.main.drawing_pointer.remove_last()
-                self.main.drawing_pointer.add_point(x, y)
-
                 if self.main.video_pressed:
                     if event.type() == QEvent.MouseButtonRelease:
                         logger.debug(f'Release on ({x}, {y})')
                         self.main.video_pressed = False
-                        self.main.show_pointer(refresh=False)
+                        if self.main.drawing_shape is not None:
+                            self.main.drawing_pointer.remove_last()
+                            self.main.drawing_pointer.add_point(x, y)
+                            self.main.show_pointer(refresh=False)
 
-                    if len(self.main.drawing_shape.points) > 1:
-                        self.main.drawing_shape.remove_last()
-                    self.main.drawing_shape.add_point(x, y)
-                    self.main.ui_web_json_shape.setHtml(json_to_html(self.main.drawing_shape.to_json(hide_id=True)))
-
-                    self.main.update_shape()
+                    if self.main.drawing_shape is not None:
+                        if len(self.main.drawing_shape.points) > 1:
+                            self.main.drawing_shape.remove_last()
+                        self.main.drawing_shape.add_point(x, y)
+                        self.main.update_shape()
                 else:
-                    self.main.update_pointer()
+                    if self.main.drawing_shape is not None:
+                        self.main.drawing_pointer.remove_last()
+                        self.main.drawing_pointer.add_point(x, y)
+                        self.main.update_pointer()
                 return True
 
         return False
@@ -98,8 +102,19 @@ class Main:
         self.draw_mutex = RLock()
         self.video: VideoStream = None
 
-        self.ui_grp_video: QGraphicsView = self.window.findChild(QGraphicsView, 'grp_video')
+        self.was_playing = False
+
+        self.video_pressed = False
+
+        self.drawing_shape = None
+        self.drawing_pointer = Shape('drawing_pointer', 0, ShapeType.pointer)
+
         self.ui_lbl_video: QLabel = self.window.findChild(QLabel, 'lbl_video')
+        self.ui_lbl_video.setMouseTracking(True)
+
+        self.video_filter = VideoEventFilter(self.ui_lbl_video, self)
+        self.ui_lbl_video.installEventFilter(self.video_filter)
+
         self.ui_action_load_video: QAction = self.window.findChild(QAction, 'action_load_video')
         self.ui_slider_speed: QSlider = self.window.findChild(QSlider, 'slider_speed')
         self.ui_lbl_speed: QLabel = self.window.findChild(QLabel, 'lbl_speed')
@@ -128,7 +143,12 @@ class Main:
 
         self.ui_web_json_shape: QWebEngineView = self.window.findChild(QWebEngineView, 'web_json_shape')
 
-        self.was_playing = False
+        self.ui_list_messages: QListWidget = self.window.findChild(QListWidget, 'list_messages')
+        self.ui_edit_new_message: QLineEdit = self.window.findChild(QLineEdit, 'edit_new_message')
+        self.ui_btn_add_new_message: QPushButton = self.window.findChild(QPushButton, 'btn_add_new_message')
+        self.ui_btn_remove_message: QPushButton = self.window.findChild(QPushButton, 'btn_remove_message')
+        self.ui_btn_edit_message: QPushButton = self.window.findChild(QPushButton, 'btn_edit_message')
+
         self.ui_action_load_video.triggered.connect(self.ui_action_load_video_triggered)
         self.ui_slider_speed.valueChanged.connect(self.ui_slider_speed_valueChanged)
         self.ui_btn_play.clicked.connect(self.ui_btn_play_clicked)
@@ -153,25 +173,48 @@ class Main:
         self.ui_btn_shape_ellipse.clicked.connect(self.ui_btn_shape_ellipse_clicked)
         self.ui_btn_shape_polygon.clicked.connect(self.ui_btn_shape_polygon_clicked)
 
-        self.ui_lbl_video.setMouseTracking(True)
-        self.ui_lbl_video.setEnabled(True)
-        self.video_filter = VideoEventFilter(self.ui_lbl_video, self)
-        self.ui_lbl_video.installEventFilter(self.video_filter)
+        self.ui_btn_add_new_message.clicked.connect(self.ui_btn_add_new_message_clicked)
+        self.ui_btn_remove_message.clicked.connect(self.ui_btn_remove_message_clicked)
+        self.ui_btn_edit_message.clicked.connect(self.ui_btn_edit_message_clicked)
 
-        self.load_video("/Users/robertonegro/Desktop/UniTN/Fundamentals of Image and Video Processing/video.mp4")
         QPixmapCache.setCacheLimit(1024 * 1024 * 1024)
-
-        self.video_pressed = False
-
-        self.drawing_shape = None
-        self.drawing_pointer = Shape('drawing_pointer', 0, ShapeType.pointer)
 
         self.appctxt.app.aboutToQuit.connect(self.about_to_quit)
 
         self.window.show()
 
+        self.load_video("/Users/robertonegro/Desktop/UniTN/Fundamentals of Image and Video Processing/video.mp4")
+
         exit_code = self.appctxt.app.exec_()
         sys.exit(exit_code)
+
+    def get_selected_message(self):
+        selected_items = self.ui_list_messages.selectedItems()
+        if selected_items:
+            for item in selected_items:
+                return item
+        return ''
+
+    def add_message_to_list(self, message):
+        self.ui_list_messages.addItem(message)
+
+    def remove_selected_message_from_list(self):
+        selected_items = self.ui_list_messages.selectedItems()
+        if selected_items:
+            for item in selected_items:
+                self.ui_list_messages.takeItem(self.ui_list_messages.row(item))
+
+    def ui_btn_add_new_message_clicked(self):
+        self.add_message_to_list(self.ui_edit_new_message.text())
+        self.ui_edit_new_message.setText('')
+
+    def ui_btn_remove_message_clicked(self):
+        self.remove_selected_message_from_list()
+
+    def ui_btn_edit_message_clicked(self):
+        text = self.get_selected_message().text()
+        self.remove_selected_message_from_list()
+        self.ui_edit_new_message.setText(text)
 
     def update_pointer(self, refresh=True):
         self.show_pointer(refresh=refresh)
@@ -190,6 +233,7 @@ class Main:
         if self.drawing_shape is not None:
             self.video.remove_modifier(self.drawing_shape)
             self.drawing_shape = None
+            self.ui_web_json_shape.setHtml('')
             if refresh:
                 self.video.refresh()
 
@@ -201,9 +245,13 @@ class Main:
             self.update_shape(refresh=refresh)
 
     def update_shape(self, refresh=True):
-        self.video.add_modifier(self.drawing_shape)
-        if refresh:
-            self.video.refresh()
+        if self.drawing_shape is not None:
+            self.video.add_modifier(self.drawing_shape)
+            self.ui_web_json_shape.setHtml(json_to_html(self.drawing_shape.to_json(hide_id=True)))
+            if refresh:
+                self.video.refresh()
+        else:
+            self.ui_web_json_shape.setHtml('')
 
     def ui_btn_shape_global_clicked(self):
         self.draw_shape(ShapeType.globals)
@@ -233,11 +281,13 @@ class Main:
     def play(self):
         if self.video:
             if not self.video.is_playing:
-                self.video.play()
+                self.reset_shape(refresh=False)
+                self.video.refresh(play_after_refresh=True)
                 self.ui_btn_play.setText('Pause')
 
     def ui_slider_timeline_sliderPressed(self):
         if self.video:
+            self.reset_shape(refresh=False)
             self.was_playing = self.video.is_playing
             self.pause()
             self.ui_slider_timeline.valueChanged.connect(self.ui_slider_timeline_valueChanged)
@@ -255,50 +305,62 @@ class Main:
 
     def ui_btn_add5sec_clicked(self):
         if self.video:
+            self.reset_shape(refresh=False)
             self.video.add_seconds(5)
 
     def ui_btn_rem5sec_clicked(self):
         if self.video:
+            self.reset_shape(refresh=False)
             self.video.remove_seconds(5)
 
     def ui_btn_add10sec_clicked(self):
         if self.video:
+            self.reset_shape(refresh=False)
             self.video.add_seconds(10)
 
     def ui_btn_rem10sec_clicked(self):
         if self.video:
+            self.reset_shape(refresh=False)
             self.video.remove_seconds(10)
 
     def ui_btn_add30sec_clicked(self):
         if self.video:
+            self.reset_shape(refresh=False)
             self.video.add_seconds(30)
 
     def ui_btn_rem30sec_clicked(self):
         if self.video:
+            self.reset_shape(refresh=False)
             self.video.remove_seconds(30)
 
     def ui_btn_add1frame_clicked(self):
         if self.video:
+            self.reset_shape(refresh=False)
             self.video.add_frames(1)
 
     def ui_btn_rem1frame_clicked(self):
         if self.video:
+            self.reset_shape(refresh=False)
             self.video.remove_frames(1)
 
     def ui_btn_add5frame_clicked(self):
         if self.video:
+            self.reset_shape(refresh=False)
             self.video.add_frames(5)
 
     def ui_btn_rem5frame_clicked(self):
         if self.video:
+            self.reset_shape(refresh=False)
             self.video.remove_frames(5)
 
     def ui_btn_add10frame_clicked(self):
         if self.video:
+            self.reset_shape(refresh=False)
             self.video.add_frames(10)
 
     def ui_btn_rem10frame_clicked(self):
         if self.video:
+            self.reset_shape(refresh=False)
             self.video.remove_frames(10)
 
     def ui_slider_speed_valueChanged(self):
