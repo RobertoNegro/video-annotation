@@ -144,6 +144,7 @@ class Main:
         self.ui_btn_shape_rectangle: QPushButton = self.window.findChild(QPushButton, 'btn_shape_rectangle')
         self.ui_btn_shape_ellipse: QPushButton = self.window.findChild(QPushButton, 'btn_shape_ellipse')
         self.ui_btn_shape_polygon: QPushButton = self.window.findChild(QPushButton, 'btn_shape_polygon')
+        self.ui_btn_shape_line: QPushButton = self.window.findChild(QPushButton, 'btn_shape_line')
 
         self.ui_web_json_shape: QWebEngineView = self.window.findChild(QWebEngineView, 'web_json_shape')
 
@@ -152,6 +153,8 @@ class Main:
         self.ui_btn_add_new_message: QPushButton = self.window.findChild(QPushButton, 'btn_add_new_message')
         self.ui_btn_remove_message: QPushButton = self.window.findChild(QPushButton, 'btn_remove_message')
         self.ui_btn_edit_message: QPushButton = self.window.findChild(QPushButton, 'btn_edit_message')
+
+        self.ui_btn_create_event: QPushButton = self.window.findChild(QPushButton, 'btn_create_event')
 
         self.ui_action_load_video.triggered.connect(self.ui_action_load_video_triggered)
         self.ui_slider_speed.valueChanged.connect(self.ui_slider_speed_valueChanged)
@@ -176,10 +179,16 @@ class Main:
         self.ui_btn_shape_rectangle.clicked.connect(self.ui_btn_shape_rectangle_clicked)
         self.ui_btn_shape_ellipse.clicked.connect(self.ui_btn_shape_ellipse_clicked)
         self.ui_btn_shape_polygon.clicked.connect(self.ui_btn_shape_polygon_clicked)
+        self.ui_btn_shape_line.clicked.connect(self.ui_btn_shape_line_clicked)
 
         self.ui_btn_add_new_message.clicked.connect(self.ui_btn_add_new_message_clicked)
         self.ui_btn_remove_message.clicked.connect(self.ui_btn_remove_message_clicked)
         self.ui_btn_edit_message.clicked.connect(self.ui_btn_edit_message_clicked)
+
+        self.ui_btn_create_event.clicked.connect(self.ui_btn_create_event_clicked)
+
+        self.update_btn_create_event()
+        self.ui_list_messages.itemSelectionChanged.connect(self.ui_list_messages_item_changed)
 
         QPixmapCache.setCacheLimit(1024 * 1024 * 1024)
 
@@ -192,11 +201,28 @@ class Main:
         exit_code = self.appctxt.app.exec_()
         sys.exit(exit_code)
 
+    def update_btn_create_event(self):
+        self.ui_btn_create_event.setEnabled(self.videostream is not None and
+                                            self.drawing_shape is not None and
+            self.drawing_shape.valid and len(self.ui_list_messages.selectedItems()) > 0)
+
+    def ui_list_messages_item_changed(self):
+        message = self.get_selected_message()
+        if self.drawing_shape is not None:
+            self.drawing_shape.message = message
+            self.update_shape()
+        self.update_btn_create_event()
+
+    def ui_btn_create_event_clicked(self):
+        if self.videostream is not None and self.drawing_shape is not None and self.drawing_shape.valid and len(self.ui_list_messages.selectedItems()) > 0:
+            self.videostream.add_shape(self.videostream.current_frame, self.drawing_shape)
+            self.reset_shape()
+
     def get_selected_message(self):
         selected_items = self.ui_list_messages.selectedItems()
         if selected_items:
             for item in selected_items:
-                return item
+                return item.text()
         return ''
 
     def add_message_to_list(self, message):
@@ -216,7 +242,7 @@ class Main:
         self.remove_selected_message_from_list()
 
     def ui_btn_edit_message_clicked(self):
-        text = self.get_selected_message().text()
+        text = self.get_selected_message()
         self.remove_selected_message_from_list()
         self.ui_edit_new_message.setText(text)
 
@@ -243,6 +269,7 @@ class Main:
                 self.ui_web_json_shape.setHtml('')
                 if refresh:
                     self.videostream.refresh()
+        self.update_btn_create_event()
 
     def update_shape(self, refresh=True):
         if self.drawing_shape is not None:
@@ -252,13 +279,16 @@ class Main:
                 self.videostream.refresh()
         else:
             self.ui_web_json_shape.setHtml('')
+        self.update_btn_create_event()
 
     def draw_shape(self, shape_type, refresh=True):
         if self.videostream:
             self.pause()
             self.reset_shape(refresh=False)
             self.drawing_shape = Shape('drawing_shape', shape_type)
+            self.drawing_shape.message = self.get_selected_message()
             self.update_shape(refresh=refresh)
+        self.update_btn_create_event()
 
     def ui_btn_shape_global_clicked(self):
         self.draw_shape(ShapeType.globals, refresh=True)
@@ -271,6 +301,9 @@ class Main:
 
     def ui_btn_shape_polygon_clicked(self):
         self.draw_shape(ShapeType.polygon)
+
+    def ui_btn_shape_line_clicked(self):
+        self.draw_shape(ShapeType.line)
 
     def ui_btn_play_clicked(self):
         if self.videostream:
@@ -287,13 +320,11 @@ class Main:
     def play(self):
         if self.videostream:
             self.hide_pointer()
-            # self.reset_shape()
             self.videostream.play()
             self.ui_btn_play.setText('Pause')
 
     def ui_slider_timeline_sliderPressed(self):
         if self.videostream:
-            # self.reset_shape(refresh=False)
             self.was_playing = self.videostream.playing
             self.pause()
 

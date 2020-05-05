@@ -21,7 +21,7 @@ def reader(conn_player: connection.Connection, filename, container_width, contai
         container_width = int(container_width)
         container_height = int(container_height)
 
-        logger.debug(f'File: {filename}')
+        logger.render(f'File: {filename}')
         video = cv2.VideoCapture(filename)
 
         video_fps = video.get(cv2.CAP_PROP_FPS)
@@ -75,6 +75,7 @@ def reader(conn_player: connection.Connection, filename, container_width, contai
             if shape.shape == ShapeType.globals:
                 def modifier(frame):
                     cv2.rectangle(frame, (0, 0), (video_width, video_height), (0, 0, 255), 3)
+                    cv2.putText(frame, shape.message, (10, 40), cv2. FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1)
                     return frame
             elif shape.shape == ShapeType.pointer:
                 def modifier(frame):
@@ -96,9 +97,11 @@ def reader(conn_player: connection.Connection, filename, container_width, contai
                             sizey = int(abs(y1 - centery))
 
                             cv2.ellipse(frame, (centerx, centery), (sizex, sizey), 0, 0, 360, (0, 0, 255), 3)
+                            cv2.putText(frame, shape.message, (centerx - sizex + 10, centery + 7), cv2. FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1)
                     elif len(shape.points) == 1:
                         x, y = shape.points[0]
                         cv2.ellipse(frame, (x, y), (2, 2), 0, 0, 360, (0, 0, 255), 3)
+                        cv2.putText(frame, shape.message, (x + 10, y + 40), cv2.FONT_HERSHEY_DUPLEX, 1.0,(255, 255, 255), 1)
                     return frame
             elif shape.shape == ShapeType.rectangle:
                 def modifier(frame):
@@ -107,9 +110,11 @@ def reader(conn_player: connection.Connection, filename, container_width, contai
                         x2, y2 = shape.points[1]
                         if None not in (x1, y1, x2, y2):
                             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 3)
+                            cv2.putText(frame, shape.message, (min(x1, x2) + 10, min(y1, y2) + 40), cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1)
                     elif len(shape.points) == 1:
                         x, y = shape.points[0]
                         cv2.ellipse(frame, (x, y), (2, 2), 0, 0, 360, (0, 0, 255), 3)
+                        cv2.putText(frame, shape.message, (x + 10, y + 40), cv2.FONT_HERSHEY_DUPLEX, 1.0,(255, 255, 255), 1)
                     return frame
             elif shape.shape == ShapeType.polygon:
                 def modifier(frame):
@@ -124,10 +129,32 @@ def reader(conn_player: connection.Connection, filename, container_width, contai
                                 x2, y2 = shape.points[i + 1]
 
                             cv2.line(frame, (x1, y1), (x2, y2), color, 3)
+                        xt, yt = shape.points[0]
+                        cv2.putText(frame, shape.message, (xt + 10, yt + 40), cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1)
                     elif len(shape.points) == 1:
                         x, y = shape.points[0]
                         cv2.ellipse(frame, (x, y), (2, 2), 0, 0, 360, (0, 0, 255), 3)
+                        cv2.putText(frame, shape.message, (x + 10, y + 40), cv2.FONT_HERSHEY_DUPLEX, 1.0,(255, 255, 255), 1)
+                    return frame
+            elif shape.shape == ShapeType.line:
+                def modifier(frame):
+                    if len(shape.points) > 1:
+                        for i, p in enumerate(shape.points):
+                            if i < len(shape.points) - 1:
+                                x1, y1 = shape.points[i]
+                                if i == len(shape.points) - 2:
+                                    color = (0, 0, 255)
+                                else:
+                                    color = (255, 0, 0)
+                                x2, y2 = shape.points[i + 1]
 
+                                cv2.line(frame, (x1, y1), (x2, y2), color, 3)
+                        xt, yt = shape.points[0]
+                        cv2.putText(frame, shape.message, (xt + 10, yt + 40), cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1)
+                    elif len(shape.points) == 1:
+                        x, y = shape.points[0]
+                        cv2.ellipse(frame, (x, y), (2, 2), 0, 0, 360, (0, 0, 255), 3)
+                        cv2.putText(frame, shape.message, (x + 10, y + 40), cv2.FONT_HERSHEY_DUPLEX, 1.0,(255, 255, 255), 1)
                     return frame
             else:
                 def modifier(frame):
@@ -139,7 +166,7 @@ def reader(conn_player: connection.Connection, filename, container_width, contai
             already_skipped = False
             while not terminate and (conn_player.poll() or len(cache) >= cache_dim):
                 player_action = conn_player.recv()
-                logger.debug(f'Action player -> reader: {player_action}')
+                logger.render(f'Action player -> reader: {player_action}')
                 if player_action['action'] == 'END':
                     terminate = True
                 elif player_action['action'] == 'resize':
@@ -154,7 +181,7 @@ def reader(conn_player: connection.Connection, filename, container_width, contai
                     else:
                         skip_cache = cache.copy()
                     cache.clear()
-                    logger.debug(f'Cached for skip: {skip_cache.keys()}')
+                    logger.render(f'Cached for skip: {skip_cache.keys()}')
                     already_skipped = True
                 elif player_action['action'] == 'gc':
                     if player_action['index'] in cache:
@@ -186,7 +213,7 @@ def reader(conn_player: connection.Connection, filename, container_width, contai
                 else:
                     video_index = int(video.get(cv2.CAP_PROP_POS_FRAMES))
                     if index != video_index:
-                        logger.warning(f'Misalignment: wanted {index}, seek at {video_index}')
+                        logger.render(f'Misalignment: wanted {index}, seek at {video_index}')
                         video.set(cv2.CAP_PROP_POS_FRAMES, index)
                     check, frame = video.read()
 
@@ -208,7 +235,7 @@ def reader(conn_player: connection.Connection, filename, container_width, contai
                         'index': index,
                     })
 
-                    # logger.debug(f'Frame {index} cached ({len(cache)})')
+                    # logger.render(f'Frame {index} cached ({len(cache)})')
                     index += 1
 
         conn_player.close()
@@ -258,7 +285,7 @@ def player(conn_reader: connection.Connection, conn_ui: connection.Connection, c
                 tmp = action.copy()
                 if 'frame' in tmp:
                     del tmp['frame']
-                logger.debug(f'Action reader -> player: {tmp}')
+                logger.player(f'Action reader -> player: {tmp}')
 
                 if action['action'] == 'frame':
                     cache.append(action)
@@ -267,7 +294,7 @@ def player(conn_reader: connection.Connection, conn_ui: connection.Connection, c
 
             while not terminate and conn_command.poll():
                 action = conn_command.recv()
-                logger.debug(f'Action command -> player: {action}')
+                logger.player(f'Action command -> player: {action}')
                 if action['action'] == 'pause':
                     playing = False
                 elif action['action'] == 'play':
@@ -275,8 +302,8 @@ def player(conn_reader: connection.Connection, conn_ui: connection.Connection, c
                 elif action['action'] == 'speed':
                     speed = action['speed']
                     interval = get_interval()
-                    logger.debug(f'Speed: {speed}')
-                    logger.debug(f'Interval: {interval}')
+                    logger.player(f'Speed: {speed}')
+                    logger.player(f'Interval: {interval}')
                 elif action['action'] == 'resize':
                     conn_reader.send(action)
                 elif action['action'] == 'skip_to':
@@ -330,13 +357,12 @@ def player(conn_reader: connection.Connection, conn_ui: connection.Connection, c
         conn_ui.close()
         conn_command.close()
         conn_reader.close()
-
     except Exception as e:
-        logger.debug(e)
+        logger.error(e)
 
 
 class VideoStream(QObject):
-    logger = logging.getLogger('Processes')
+    logger = logging.getLogger('VideoStream')
 
     @staticmethod
     def index_to_formatted_time(frame, fps):
@@ -395,7 +421,7 @@ class VideoStream(QObject):
         return self.__playing
 
     def __thread_execution(self, conn_player: connection.Connection):
-        logger = logging.getLogger('Thread')
+        logger = logging.getLogger('UIThread')
 
         terminate = False
 
@@ -405,7 +431,7 @@ class VideoStream(QObject):
             tmp = action.copy()
             if 'frame' in tmp:
                 del tmp['frame']
-            logger.debug(f'Action player -> ui: {tmp}')
+            logger.render(f'Action player -> ui: {tmp}')
 
             if action['action'] == 'END':
                 terminate = True

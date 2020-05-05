@@ -29,6 +29,7 @@ def add_logging_event(name, num):
 CAN_USE_BOLD_FONT = (not sys.platform.startswith('win'))
 level_styles = dict(
     render=dict(color='white', faint=True),
+    player=dict(color='white', faint=True),
     spam=dict(color='green', faint=True),
     debug=dict(color='green'),
     verbose=dict(color='blue'),
@@ -40,7 +41,6 @@ level_styles = dict(
     critical=dict(color='red', bold=CAN_USE_BOLD_FONT))
 
 
-add_logging_event('SKIP', 3)
-add_logging_event('RENDER', 2)
-add_logging_event('CACHE', 1)
-coloredlogs.install(level=logging.CACHE, milliseconds=True, level_styles=level_styles)
+add_logging_event('PLAYER', 2)
+add_logging_event('RENDER', 1)
+coloredlogs.install(level=logging.DEBUG, milliseconds=True, level_styles=level_styles)
