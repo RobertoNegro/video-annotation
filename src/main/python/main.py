@@ -12,8 +12,8 @@ from PySide2.QtUiTools import QUiLoader
 
 import sys
 
-from classes.Utils import json_to_html
 from classes.VideoStream import VideoStream
+from classes.Utils import json_to_html
 from classes.Shape import Shape, ShapeType
 
 logger = logging.getLogger('Main')
@@ -28,18 +28,20 @@ class VideoEventFilter(QObject):
         # logger.debug(event.type())
 
         if event.type() == QEvent.Resize:
-            if self.main.video:
-                self.main.video.refresh()
+            if self.main.videostream:
+                self.main.videostream.resize(self.main.ui_lbl_video.frameGeometry().width(),
+                                             self.main.ui_lbl_video.frameGeometry().height())
+                self.main.videostream.refresh()
             return True
 
-        if self.main.video is not None and not self.main.video.is_playing:
+        if self.main.videostream is not None and not self.main.videostream.playing:
             if event.type() == QEvent.Leave:
                 if self.main.drawing_shape is not None:
                     self.main.hide_pointer()
                 return True
 
             if event.type() == QEvent.MouseButtonPress:
-                x, y = self.main.video.get_video_coord(event.x(), event.y())
+                x, y = self.main.videostream.get_video_coord(event.x(), event.y())
                 logger.debug(f'Click on ({x}, {y})')
                 if event.button() == Qt.MouseButton.LeftButton:
                     self.main.video_pressed = True
@@ -57,7 +59,7 @@ class VideoEventFilter(QObject):
                 return True
 
             if event.type() == QEvent.MouseMove or event.type() == QEvent.MouseButtonRelease:
-                x, y = self.main.video.get_video_coord(event.x(), event.y())
+                x, y = self.main.videostream.get_video_coord(event.x(), event.y())
 
                 if self.main.video_pressed:
                     if event.type() == QEvent.MouseButtonRelease:
@@ -99,15 +101,17 @@ class Main:
             logger.error(loader.errorString())
             sys.exit(-1)
 
-        self.draw_mutex = RLock()
-        self.video: VideoStream = None
+        self.videostream: VideoStream = None
 
+        self.draw_mutex = RLock()
+
+        self.force_update_timeline_slider = False
         self.was_playing = False
 
         self.video_pressed = False
 
         self.drawing_shape = None
-        self.drawing_pointer = Shape('drawing_pointer', 0, ShapeType.pointer)
+        self.drawing_pointer = Shape('drawing_pointer', ShapeType.pointer)
 
         self.ui_lbl_video: QLabel = self.window.findChild(QLabel, 'lbl_video')
         self.ui_lbl_video.setMouseTracking(True)
@@ -220,41 +224,44 @@ class Main:
         self.show_pointer(refresh=refresh)
 
     def show_pointer(self, refresh=True):
-        self.video.add_modifier(self.drawing_pointer)
-        if refresh:
-            self.video.refresh()
+        if self.videostream:
+            self.videostream.add_drawing_shape(self.drawing_pointer)
+            if refresh:
+                self.videostream.refresh()
 
     def hide_pointer(self, refresh=True):
-        self.video.remove_modifier(self.drawing_pointer)
-        if refresh:
-            self.video.refresh()
+        if self.videostream:
+            self.videostream.remove_drawing_shape(self.drawing_pointer.id)
+            if refresh:
+                self.videostream.refresh()
 
     def reset_shape(self, refresh=True):
-        if self.drawing_shape is not None:
-            self.video.remove_modifier(self.drawing_shape)
-            self.drawing_shape = None
-            self.ui_web_json_shape.setHtml('')
-            if refresh:
-                self.video.refresh()
-
-    def draw_shape(self, shape_type, refresh=True):
-        if self.video:
-            self.pause()
-            self.reset_shape(refresh=False)
-            self.drawing_shape = Shape('drawing_shape', self.video.get_frameindex, shape_type)
-            self.update_shape(refresh=refresh)
+        if self.videostream:
+            if self.drawing_shape is not None:
+                self.videostream.remove_drawing_shape(self.drawing_shape.id)
+                self.drawing_shape = None
+                self.ui_web_json_shape.setHtml('')
+                if refresh:
+                    self.videostream.refresh()
 
     def update_shape(self, refresh=True):
         if self.drawing_shape is not None:
-            self.video.add_modifier(self.drawing_shape)
+            self.videostream.add_drawing_shape(self.drawing_shape)
             self.ui_web_json_shape.setHtml(json_to_html(self.drawing_shape.to_json(hide_id=True)))
             if refresh:
-                self.video.refresh()
+                self.videostream.refresh()
         else:
             self.ui_web_json_shape.setHtml('')
 
+    def draw_shape(self, shape_type, refresh=True):
+        if self.videostream:
+            self.pause()
+            self.reset_shape(refresh=False)
+            self.drawing_shape = Shape('drawing_shape', shape_type)
+            self.update_shape(refresh=refresh)
+
     def ui_btn_shape_global_clicked(self):
-        self.draw_shape(ShapeType.globals)
+        self.draw_shape(ShapeType.globals, refresh=True)
 
     def ui_btn_shape_rectangle_clicked(self):
         self.draw_shape(ShapeType.rectangle)
@@ -266,122 +273,120 @@ class Main:
         self.draw_shape(ShapeType.polygon)
 
     def ui_btn_play_clicked(self):
-        if self.video:
-            if self.video.is_playing:
+        if self.videostream:
+            if self.videostream.playing:
                 self.pause()
             else:
                 self.play()
 
     def pause(self):
-        if self.video:
-            if self.video.is_playing:
-                self.video.pause()
-                self.ui_btn_play.setText('Play')
+        if self.videostream:
+            self.videostream.pause()
+            self.ui_btn_play.setText('Play')
 
     def play(self):
-        if self.video:
-            if not self.video.is_playing:
-                self.reset_shape(refresh=False)
-                self.video.refresh(play_after_refresh=True)
-                self.ui_btn_play.setText('Pause')
+        if self.videostream:
+            self.hide_pointer()
+            # self.reset_shape()
+            self.videostream.play()
+            self.ui_btn_play.setText('Pause')
 
     def ui_slider_timeline_sliderPressed(self):
-        if self.video:
-            self.reset_shape(refresh=False)
-            self.was_playing = self.video.is_playing
+        if self.videostream:
+            # self.reset_shape(refresh=False)
+            self.was_playing = self.videostream.playing
             self.pause()
+
+            new_frame_index = self.ui_slider_timeline.value()
+            self.videostream.skip_to(new_frame_index)
+
             self.ui_slider_timeline.valueChanged.connect(self.ui_slider_timeline_valueChanged)
 
     def ui_slider_timeline_valueChanged(self):
-        if self.video:
+        if self.videostream:
             new_frame_index = self.ui_slider_timeline.value()
-            self.video.skip_to_frame(new_frame_index)
+            self.videostream.skip_to(new_frame_index)
 
     def ui_slider_timeline_sliderReleased(self):
-        self.ui_slider_timeline.valueChanged.disconnect()
-        if self.video:
+        if self.videostream:
+            self.ui_slider_timeline.valueChanged.disconnect()
+
             new_frame_index = self.ui_slider_timeline.value()
-            self.video.skip_to_frame(new_frame_index, play_after_skip=self.was_playing)
+            self.videostream.skip_to(new_frame_index)
+
+            if self.was_playing:
+                self.play()
 
     def ui_btn_add5sec_clicked(self):
-        if self.video:
-            self.reset_shape(refresh=False)
-            self.video.add_seconds(5)
+        self.add_seconds(5)
 
     def ui_btn_rem5sec_clicked(self):
-        if self.video:
-            self.reset_shape(refresh=False)
-            self.video.remove_seconds(5)
+        self.add_seconds(-5)
 
     def ui_btn_add10sec_clicked(self):
-        if self.video:
-            self.reset_shape(refresh=False)
-            self.video.add_seconds(10)
+        self.add_seconds(10)
 
     def ui_btn_rem10sec_clicked(self):
-        if self.video:
-            self.reset_shape(refresh=False)
-            self.video.remove_seconds(10)
+        self.add_seconds(-10)
 
     def ui_btn_add30sec_clicked(self):
-        if self.video:
-            self.reset_shape(refresh=False)
-            self.video.add_seconds(30)
+        self.add_seconds(30)
 
     def ui_btn_rem30sec_clicked(self):
-        if self.video:
-            self.reset_shape(refresh=False)
-            self.video.remove_seconds(30)
+        self.add_seconds(-30)
 
     def ui_btn_add1frame_clicked(self):
-        if self.video:
-            self.reset_shape(refresh=False)
-            self.video.add_frames(1)
+        self.add_frames(1)
 
     def ui_btn_rem1frame_clicked(self):
-        if self.video:
-            self.reset_shape(refresh=False)
-            self.video.remove_frames(1)
+        self.add_frames(-1)
 
     def ui_btn_add5frame_clicked(self):
-        if self.video:
-            self.reset_shape(refresh=False)
-            self.video.add_frames(5)
+        self.add_frames(5)
 
     def ui_btn_rem5frame_clicked(self):
-        if self.video:
-            self.reset_shape(refresh=False)
-            self.video.remove_frames(5)
+        self.add_frames(-5)
 
     def ui_btn_add10frame_clicked(self):
-        if self.video:
-            self.reset_shape(refresh=False)
-            self.video.add_frames(10)
+        self.add_frames(10)
 
     def ui_btn_rem10frame_clicked(self):
-        if self.video:
-            self.reset_shape(refresh=False)
-            self.video.remove_frames(10)
+        self.add_frames(-10)
+
+    def add_frames(self, frames):
+        if self.videostream:
+            self.videostream.add_frames(frames)
+            self.force_update_timeline_slider = True
+
+    def add_seconds(self, seconds):
+        if self.videostream:
+            self.videostream.add_seconds(seconds)
+            self.force_update_timeline_slider = True
 
     def ui_slider_speed_valueChanged(self):
-        if self.video:
+        if self.videostream:
             slider_value = self.ui_slider_speed.value()
             speed = slider_value * 0.25
             self.ui_lbl_speed.setText(f'{speed}x')
-            self.video.set_speed(speed)
+            self.videostream.speed(speed)
 
     def on_frame_drawn(self, frame, index):
         self.draw_mutex.acquire()
 
-        if self.video.is_playing:
-            self.ui_slider_timeline.setValue(self.video.get_frameindex)
+        if self.videostream.playing or self.force_update_timeline_slider:
+            if self.force_update_timeline_slider:
+                self.force_update_timeline_slider = False
+            self.ui_slider_timeline.setValue(self.videostream.current_frame)
+        self.ui_grp_time.setTitle(f'Time: {self.videostream.current_timestamp} / {self.videostream.total_timestamp}')
+        self.ui_grp_frame.setTitle(f'Frame: {self.videostream.current_frame + 1} / {self.videostream.total_frames}')
 
         self.ui_lbl_video.setPixmap(frame)
-        self.ui_grp_time.setTitle(f'Time: {self.video.get_timestamp} / {self.video.get_total_length}')
-        self.ui_grp_frame.setTitle(f'Frame: {self.video.get_frameindex + 1} / {self.video.get_total_frames}')
 
         if self.drawing_shape is not None:
-            self.drawing_shape.frame = self.video.get_frameindex + 1
+            self.drawing_shape.frame = self.videostream.current_frame + 1
+
+        self.ui_slider_timeline.setMaximum(self.videostream.total_frames - 1)
+        self.ui_slider_timeline.setEnabled(True)
 
         self.draw_mutex.release()
 
@@ -395,19 +400,19 @@ class Main:
             self.load_video(filename)
 
     def load_video(self, filename):
-        self.video = VideoStream(filename, self.ui_lbl_video)
-        self.video.frame_drawn.connect(self.on_frame_drawn)
+        self.videostream = VideoStream()
+        self.videostream.start(filename,
+                               self.ui_lbl_video.frameGeometry().width(), self.ui_lbl_video.frameGeometry().height())
+        self.videostream.draw_frame_signal.connect(self.on_frame_drawn)
 
         self.ui_slider_speed.setValue(4)
         self.ui_slider_speed.setEnabled(True)
 
-        self.ui_slider_timeline.setMaximum(self.video.get_total_frames - 1)
-        self.ui_slider_timeline.setEnabled(True)
-
         self.play()
 
     def about_to_quit(self):
-        self.video.destroy()
+        if self.videostream:
+            self.videostream.destroy()
 
 
 if __name__ == '__main__':

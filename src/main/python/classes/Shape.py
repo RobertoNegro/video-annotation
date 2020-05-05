@@ -11,7 +11,7 @@ class ShapeType:
 
 
 class Shape:
-    def __init__(self, id, frame, shape):
+    def __init__(self, id, shape):
         if shape == ShapeType.globals:
             self.max_points = 0
         elif shape == ShapeType.rectangle:
@@ -28,7 +28,6 @@ class Shape:
         self.__structure = dict()
         self.__structure['id'] = id
         self.__structure['shape'] = shape
-        self.__structure['frame'] = frame
         self.__structure['points'] = []
 
     @property
@@ -65,14 +64,6 @@ class Shape:
     @property
     def empty(self):
         return len(self.__structure['points']) == 0
-
-    @property
-    def frame(self):
-        return self.__structure['frame']
-
-    @frame.setter
-    def frame(self, frame):
-        self.__structure['frame'] = frame
 
     def reset(self):
         self.__structure['points'].clear()
