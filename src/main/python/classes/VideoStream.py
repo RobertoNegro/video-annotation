@@ -4,6 +4,7 @@ import time
 from multiprocessing import Process, Pipe, connection, Queue, Lock, RLock
 from threading import Thread
 import cv2
+import numpy as np
 import qimage2ndarray
 from PySide2.QtCore import Signal, QObject
 from PySide2.QtGui import QPixmap
@@ -33,6 +34,7 @@ def reader(conn_player: connection.Connection, filename, container_width, contai
             w = int(min(container_width, container_height * video_ratio))
             h = int(min(container_height, container_width / video_ratio))
             return w, h
+
         video_resized_width, video_resized_height = get_resized_size()
 
         video_total_frames = video.get(cv2.CAP_PROP_FRAME_COUNT)
@@ -47,7 +49,9 @@ def reader(conn_player: connection.Connection, filename, container_width, contai
         video_total_frames += 1
         video_total_frames = int(video_total_frames)
 
-        assert None not in (container_height, container_width, video, video_fps, video_width, video_height, video_resized_width, video_resized_height, video_total_frames)
+        assert None not in (
+        container_height, container_width, video, video_fps, video_width, video_height, video_resized_width,
+        video_resized_height, video_total_frames)
 
         def send_metadata():
             metadata = {
@@ -72,18 +76,56 @@ def reader(conn_player: connection.Connection, filename, container_width, contai
         drawing_shapes = []
 
         def get_modifier(shape: Shape):
+            color = shape.color
+            last_color = shape.last_color
+
+            def mask_negative(frame, mask):
+                negative = frame.copy()
+                negative = cv2.bitwise_not(negative)
+                negative = cv2.bitwise_and(negative, negative, mask=mask)
+
+                mask = cv2.bitwise_not(mask)
+                frame = cv2.bitwise_and(frame, frame, mask=mask)
+                frame = cv2.bitwise_or(negative, frame)
+                return frame
+
+            def mask_opposite(frame, mask):
+                opposite = frame.copy()
+                opposite = cv2.inRange(opposite, np.array([0, 0, 0]), np.array([128, 128, 128]))
+                opposite = cv2.cvtColor(opposite, cv2.COLOR_GRAY2RGB)
+                opposite = cv2.bitwise_and(opposite, opposite, mask=mask)
+
+                mask = cv2.bitwise_not(mask)
+                frame = cv2.bitwise_and(frame, frame, mask=mask)
+                frame = cv2.bitwise_or(opposite, frame)
+
+                return frame
+
+            def negative_text(frame, text, x, y):
+                w, h, _ = frame.shape
+                mask = np.zeros((w, h), frame.dtype)
+                cv2.putText(mask, text, (x, y), cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1)
+                frame = mask_opposite(frame, mask)
+
+                return frame
+
             if shape.shape == ShapeType.globals:
                 def modifier(frame):
-                    cv2.rectangle(frame, (0, 0), (video_width, video_height), (0, 0, 255), 3)
-                    cv2.putText(frame, shape.message, (10, 40), cv2. FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1)
+                    cv2.rectangle(frame, (0, 0), (video_width, video_height), color, 3)
+                    frame = negative_text(frame, shape.message, 10, 40)
                     return frame
             elif shape.shape == ShapeType.pointer:
                 def modifier(frame):
                     if len(shape.points) >= 1:
                         x, y = shape.points[0]
                         if None not in (x, y):
-                            cv2.line(frame, (x, 0), (x, video_height), (64, 64, 64), 3)
-                            cv2.line(frame, (0, y), (video_width, y), (64, 64, 64), 3)
+                            w, h, _ = frame.shape
+                            mask = np.zeros((w, h), frame.dtype)
+                            cv2.line(mask, (x, 0), (x, video_height), (255, 255, 255), 3)
+                            cv2.line(mask, (0, y), (video_width, y), (255, 255, 255), 3)
+                            frame = mask_negative(frame, mask)
+                            return frame
+
                     return frame
             elif shape.shape == ShapeType.ellipse:
                 def modifier(frame):
@@ -96,12 +138,12 @@ def reader(conn_player: connection.Connection, filename, container_width, contai
                             sizex = int(abs(x1 - centerx))
                             sizey = int(abs(y1 - centery))
 
-                            cv2.ellipse(frame, (centerx, centery), (sizex, sizey), 0, 0, 360, (0, 0, 255), 3)
-                            cv2.putText(frame, shape.message, (centerx - sizex + 10, centery + 7), cv2. FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1)
+                            cv2.ellipse(frame, (centerx, centery), (sizex, sizey), 0, 0, 360, color, 3)
+                            frame = negative_text(frame, shape.message, centerx - sizex + 10, centery + 7)
                     elif len(shape.points) == 1:
                         x, y = shape.points[0]
-                        cv2.ellipse(frame, (x, y), (2, 2), 0, 0, 360, (0, 0, 255), 3)
-                        cv2.putText(frame, shape.message, (x + 10, y + 40), cv2.FONT_HERSHEY_DUPLEX, 1.0,(255, 255, 255), 1)
+                        cv2.ellipse(frame, (x, y), (2, 2), 0, 0, 360, color, 3)
+                        frame = negative_text(frame, shape.message, x + 10, y + 40)
                     return frame
             elif shape.shape == ShapeType.rectangle:
                 def modifier(frame):
@@ -109,12 +151,12 @@ def reader(conn_player: connection.Connection, filename, container_width, contai
                         x1, y1 = shape.points[0]
                         x2, y2 = shape.points[1]
                         if None not in (x1, y1, x2, y2):
-                            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 3)
-                            cv2.putText(frame, shape.message, (min(x1, x2) + 10, min(y1, y2) + 40), cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1)
+                            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 3)
+                        frame = negative_text(frame, shape.message, min(x1, x2) + 10, min(y1, y2) + 40)
                     elif len(shape.points) == 1:
                         x, y = shape.points[0]
-                        cv2.ellipse(frame, (x, y), (2, 2), 0, 0, 360, (0, 0, 255), 3)
-                        cv2.putText(frame, shape.message, (x + 10, y + 40), cv2.FONT_HERSHEY_DUPLEX, 1.0,(255, 255, 255), 1)
+                        cv2.ellipse(frame, (x, y), (2, 2), 0, 0, 360, color, 3)
+                        frame = negative_text(frame, shape.message, x + 10, y + 40)
                     return frame
             elif shape.shape == ShapeType.polygon:
                 def modifier(frame):
@@ -122,19 +164,19 @@ def reader(conn_player: connection.Connection, filename, container_width, contai
                         for i, p in enumerate(shape.points):
                             x1, y1 = shape.points[i]
                             if i == len(shape.points) - 1:
-                                color = (0, 0, 255)
+                                c = last_color
                                 x2, y2 = shape.points[0]
                             else:
-                                color = (255, 0, 0)
+                                c = color
                                 x2, y2 = shape.points[i + 1]
 
-                            cv2.line(frame, (x1, y1), (x2, y2), color, 3)
+                            cv2.line(frame, (x1, y1), (x2, y2), c, 3)
                         xt, yt = shape.points[0]
-                        cv2.putText(frame, shape.message, (xt + 10, yt + 40), cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1)
+                        frame = negative_text(frame, shape.message, xt + 10, yt + 40)
                     elif len(shape.points) == 1:
                         x, y = shape.points[0]
-                        cv2.ellipse(frame, (x, y), (2, 2), 0, 0, 360, (0, 0, 255), 3)
-                        cv2.putText(frame, shape.message, (x + 10, y + 40), cv2.FONT_HERSHEY_DUPLEX, 1.0,(255, 255, 255), 1)
+                        cv2.ellipse(frame, (x, y), (2, 2), 0, 0, 360, color, 3)
+                        frame = negative_text(frame, shape.message, x + 10, y + 40)
                     return frame
             elif shape.shape == ShapeType.line:
                 def modifier(frame):
@@ -143,22 +185,23 @@ def reader(conn_player: connection.Connection, filename, container_width, contai
                             if i < len(shape.points) - 1:
                                 x1, y1 = shape.points[i]
                                 if i == len(shape.points) - 2:
-                                    color = (0, 0, 255)
+                                    c = last_color
                                 else:
-                                    color = (255, 0, 0)
+                                    c = color
                                 x2, y2 = shape.points[i + 1]
 
-                                cv2.line(frame, (x1, y1), (x2, y2), color, 3)
+                                cv2.line(frame, (x1, y1), (x2, y2), c, 3)
                         xt, yt = shape.points[0]
-                        cv2.putText(frame, shape.message, (xt + 10, yt + 40), cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1)
+                        frame = negative_text(frame, shape.message, xt + 10, yt + 40)
                     elif len(shape.points) == 1:
                         x, y = shape.points[0]
-                        cv2.ellipse(frame, (x, y), (2, 2), 0, 0, 360, (0, 0, 255), 3)
-                        cv2.putText(frame, shape.message, (x + 10, y + 40), cv2.FONT_HERSHEY_DUPLEX, 1.0,(255, 255, 255), 1)
+                        cv2.ellipse(frame, (x, y), (2, 2), 0, 0, 360, color, 3)
+                        frame = negative_text(frame, shape.message, x + 10, y + 40)
                     return frame
             else:
                 def modifier(frame):
                     return frame
+
                 logger.warning(f'Unknown shape while trying to add a new modifier: {shape.shape}')
             return modifier
 
@@ -226,7 +269,8 @@ def reader(conn_player: connection.Connection, filename, container_width, contai
                     for s in drawing_shapes:
                         frame = get_modifier(s)(frame)
 
-                    frame = cv2.resize(frame, (video_resized_width, video_resized_height), interpolation=cv2.INTER_CUBIC)
+                    frame = cv2.resize(frame, (video_resized_width, video_resized_height),
+                                       interpolation=cv2.INTER_CUBIC)
                     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
                     conn_player.send({
@@ -275,6 +319,7 @@ def player(conn_reader: connection.Connection, conn_ui: connection.Connection, c
         def get_interval():
             i = 1.0 / (fps * speed)
             return 0.016 if i < 0.016 else i
+
         interval = get_interval()
         assert interval is not None
 
@@ -437,7 +482,8 @@ class VideoStream(QObject):
                 terminate = True
             elif action['action'] == 'frame':
                 self.__current_frame = action['index']
-                self.draw_frame_signal.emit(QPixmap.fromImage(qimage2ndarray.array2qimage(action['frame'])), action['index'])
+                self.draw_frame_signal.emit(QPixmap.fromImage(qimage2ndarray.array2qimage(action['frame'])),
+                                            action['index'])
             elif action['action'] == 'metadata':
                 self.__fps = action['fps']
                 self.__width = action['width']
@@ -462,7 +508,8 @@ class VideoStream(QObject):
         container_height = int(container_height)
 
         # creating new processes
-        reader_process = Process(target=reader, args=(reader_to_player, filename, container_width, container_height, cache_size))
+        reader_process = Process(target=reader,
+                                 args=(reader_to_player, filename, container_width, container_height, cache_size))
         player_process = Process(target=player, args=(player_to_reader, player_to_ui, player_to_command))
 
         # running processes

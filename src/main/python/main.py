@@ -1,4 +1,5 @@
 import logging
+import uuid
 from threading import RLock
 
 from PySide2.QtWebEngineWidgets import QWebEngineView
@@ -113,6 +114,8 @@ class Main:
         self.drawing_shape = None
         self.drawing_pointer = Shape('drawing_pointer', ShapeType.pointer)
 
+        self.timeline = []
+
         self.ui_lbl_video: QLabel = self.window.findChild(QLabel, 'lbl_video')
         self.ui_lbl_video.setMouseTracking(True)
 
@@ -148,6 +151,10 @@ class Main:
 
         self.ui_web_json_shape: QWebEngineView = self.window.findChild(QWebEngineView, 'web_json_shape')
 
+        self.ui_list_timeline: QListWidget = self.window.findChild(QListWidget, 'list_timeline')
+        self.ui_btn_edit_timeline: QPushButton = self.window.findChild(QPushButton, 'btn_edit_timeline')
+        self.ui_btn_delete_timeline: QPushButton = self.window.findChild(QPushButton, 'btn_delete_timeline')
+
         self.ui_list_messages: QListWidget = self.window.findChild(QListWidget, 'list_messages')
         self.ui_edit_new_message: QLineEdit = self.window.findChild(QLineEdit, 'edit_new_message')
         self.ui_btn_add_new_message: QPushButton = self.window.findChild(QPushButton, 'btn_add_new_message')
@@ -155,6 +162,9 @@ class Main:
         self.ui_btn_edit_message: QPushButton = self.window.findChild(QPushButton, 'btn_edit_message')
 
         self.ui_btn_create_event: QPushButton = self.window.findChild(QPushButton, 'btn_create_event')
+
+        self.ui_btn_add_new_message.setEnabled(False)
+        self.ui_edit_new_message.textChanged.connect(self.ui_edit_new_message_text_changed)
 
         self.ui_action_load_video.triggered.connect(self.ui_action_load_video_triggered)
         self.ui_slider_speed.valueChanged.connect(self.ui_slider_speed_valueChanged)
@@ -190,6 +200,8 @@ class Main:
         self.update_btn_create_event()
         self.ui_list_messages.itemSelectionChanged.connect(self.ui_list_messages_item_changed)
 
+        self.ui_list_timeline.itemSelectionChanged.connect(self.ui_list_timeline_item_changed)
+
         QPixmapCache.setCacheLimit(1024 * 1024 * 1024)
 
         self.appctxt.app.aboutToQuit.connect(self.about_to_quit)
@@ -201,10 +213,28 @@ class Main:
         exit_code = self.appctxt.app.exec_()
         sys.exit(exit_code)
 
+    def list_timeline_get_selected(self):
+        selected_indexes = self.ui_list_timeline.selectedIndexes()
+        if selected_indexes:
+            for i in selected_indexes:
+                return self.timeline[i.row()]
+
+    def update_list_timeline(self):
+        self.ui_list_timeline.clear()
+        for (frame, shape) in self.timeline:
+            self.ui_list_timeline.addItem(f'{frame} - {shape.message} ({shape.shape})')
+
+    def ui_list_timeline_item_changed(self):
+        frame, shape = self.list_timeline_get_selected()
+
+        if self.videostream:
+            self.videostream.skip_to(frame)
+            self.force_update_timeline_slider = True
+
     def update_btn_create_event(self):
         self.ui_btn_create_event.setEnabled(self.videostream is not None and
                                             self.drawing_shape is not None and
-            self.drawing_shape.valid and len(self.ui_list_messages.selectedItems()) > 0)
+                                            self.drawing_shape.valid and len(self.ui_list_messages.selectedItems()) > 0)
 
     def ui_list_messages_item_changed(self):
         message = self.get_selected_message()
@@ -214,8 +244,14 @@ class Main:
         self.update_btn_create_event()
 
     def ui_btn_create_event_clicked(self):
-        if self.videostream is not None and self.drawing_shape is not None and self.drawing_shape.valid and len(self.ui_list_messages.selectedItems()) > 0:
+        if self.videostream is not None and self.drawing_shape is not None and self.drawing_shape.valid and len(
+                self.ui_list_messages.selectedItems()) > 0:
+            self.drawing_shape.id = uuid.uuid1()
+            self.drawing_shape.color = (255, 0, 0)
+            self.drawing_shape.last_color = (255, 0, 0)
             self.videostream.add_shape(self.videostream.current_frame, self.drawing_shape)
+            self.timeline.append((self.videostream.current_frame, self.drawing_shape))
+            self.update_list_timeline()
             self.reset_shape()
 
     def get_selected_message(self):
@@ -224,6 +260,10 @@ class Main:
             for item in selected_items:
                 return item.text()
         return ''
+
+    def ui_edit_new_message_text_changed(self):
+        message = self.ui_edit_new_message.text().strip()
+        self.ui_btn_add_new_message.setEnabled(len(message) > 0)
 
     def add_message_to_list(self, message):
         self.ui_list_messages.addItem(message)
@@ -235,8 +275,10 @@ class Main:
                 self.ui_list_messages.takeItem(self.ui_list_messages.row(item))
 
     def ui_btn_add_new_message_clicked(self):
-        self.add_message_to_list(self.ui_edit_new_message.text())
-        self.ui_edit_new_message.setText('')
+        message = self.ui_edit_new_message.text().strip()
+        if len(message) > 0:
+            self.add_message_to_list(message)
+            self.ui_edit_new_message.setText('')
 
     def ui_btn_remove_message_clicked(self):
         self.remove_selected_message_from_list()
@@ -264,7 +306,7 @@ class Main:
     def reset_shape(self, refresh=True):
         if self.videostream:
             if self.drawing_shape is not None:
-                self.videostream.remove_drawing_shape(self.drawing_shape.id)
+                self.videostream.remove_drawing_shape('drawing_shape')
                 self.drawing_shape = None
                 self.ui_web_json_shape.setHtml('')
                 if refresh:
@@ -285,7 +327,7 @@ class Main:
         if self.videostream:
             self.pause()
             self.reset_shape(refresh=False)
-            self.drawing_shape = Shape('drawing_shape', shape_type)
+            self.drawing_shape = Shape('drawing_shape', shape_type, color=(0, 0, 255), last_color=(0, 255, 255))
             self.drawing_shape.message = self.get_selected_message()
             self.update_shape(refresh=refresh)
         self.update_btn_create_event()

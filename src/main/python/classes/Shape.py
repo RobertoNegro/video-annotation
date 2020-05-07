@@ -12,7 +12,7 @@ class ShapeType:
 
 
 class Shape:
-    def __init__(self, id, shape):
+    def __init__(self, id, shape, color=(255, 0, 0), last_color=(255, 0, 0)):
         if shape == ShapeType.globals:
             self.max_points = 0
             self.min_points = None
@@ -35,6 +35,9 @@ class Shape:
             self.max_points = 0
             self.min_points = 0
 
+        self.__color = color
+        self.__last_color = last_color
+
         self.__structure = dict()
         self.__structure['id'] = id
         self.__structure['shape'] = shape
@@ -42,8 +45,28 @@ class Shape:
         self.__structure['message'] = ''
 
     @property
+    def color(self):
+        return self.__color
+
+    @color.setter
+    def color(self, color):
+        self.__color = color
+
+    @property
+    def last_color(self):
+        return self.__last_color
+
+    @last_color.setter
+    def last_color(self, last_color):
+        self.__last_color = last_color
+
+    @property
     def id(self):
         return self.__structure['id']
+
+    @id.setter
+    def id(self, id):
+        self.__structure['id'] = id
 
     @property
     def shape(self):
@@ -95,4 +118,6 @@ class Shape:
         structure = self.__structure.copy()
         if hide_id:
             del structure['id']
+        if len(structure['points']) == 0:
+            del structure['points']
         return json.dumps(structure, indent=indent, sort_keys=True)
