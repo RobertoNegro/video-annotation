@@ -581,7 +581,7 @@ class VideoStream(QObject):
         self.__commands_pipe.send({'action': 'resize', 'width': width, 'height': height})
 
     def add_seconds(self, seconds):
-        self.skip_to(max(min(self.current_frame + self.fps * seconds, self.total_frames - 1), 0))
+        self.skip_to(int(max(min(self.current_frame + self.fps * seconds, self.total_frames - 1), 0)))
 
     def add_frames(self, frames):
         self.skip_to(max(min(self.current_frame + frames, self.total_frames - 1), 0))
