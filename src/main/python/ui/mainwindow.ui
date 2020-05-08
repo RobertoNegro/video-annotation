@@ -603,19 +603,7 @@ color: rgb(255, 255, 255);</string>
             </layout>
            </item>
            <item>
-            <widget class="QWebEngineView" name="web_json_shape">
-             <property name="sizePolicy">
-              <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-               <horstretch>0</horstretch>
-               <verstretch>0</verstretch>
-              </sizepolicy>
-             </property>
-             <property name="url">
-              <url>
-               <string>about:blank</string>
-              </url>
-             </property>
-            </widget>
+            <widget class="QTextEdit" name="text_json_shape"/>
            </item>
           </layout>
          </widget>
@@ -808,13 +796,6 @@ color: rgb(255, 255, 255);</string>
    </property>
   </action>
  </widget>
- <customwidgets>
-  <customwidget>
-   <class>QWebEngineView</class>
-   <extends>QWidget</extends>
-   <header location="global">QtWebEngineWidgets/QWebEngineView</header>
-  </customwidget>
- </customwidgets>
  <resources/>
  <connections/>
 </ui>

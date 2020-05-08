@@ -2,5 +2,9 @@
     "app_name": "video-annotation",
     "author": "Roberto Negro",
     "main_module": "src/main/python/main.py",
-    "version": "0.0.0"
+    "version": "0.0.0",
+    "hidden_imports": [
+        "PySide2.QtXml",
+        "PySide2.QtPrintSupport"
+    ]
 }

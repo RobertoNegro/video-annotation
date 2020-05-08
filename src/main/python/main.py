@@ -3,12 +3,10 @@ import logging
 import uuid
 from threading import RLock
 
-from PySide2.QtWebEngineWidgets import QWebEngineView
-
 from PySide2.QtCore import QFile, QIODevice, QEvent, QObject, Qt, QDir
 from PySide2.QtGui import QPixmapCache
 from PySide2.QtWidgets import QFileDialog, QLabel, QAction, QSlider, QPushButton, QGroupBox, QGraphicsView, QListWidget, \
-    QLineEdit, QMenu, QMessageBox
+    QLineEdit, QMenu, QMessageBox, QTextEdit
 from fbs_runtime.application_context.PySide2 import ApplicationContext
 from PySide2.QtUiTools import QUiLoader
 
@@ -20,6 +18,8 @@ from classes.Shape import Shape, ShapeType
 
 logger = logging.getLogger('Main')
 
+# DEPENDENCIES:
+# pip install numpy Pygments coloredlogs PySide2 opencv-python-headless qimage2ndarray fbs pyinstaller==3.4
 
 class EditNewMessageFilter(QObject):
     def __init__(self, parent, main):
@@ -28,9 +28,6 @@ class EditNewMessageFilter(QObject):
 
     def eventFilter(self, obj, event):
         if event.type() == QEvent.KeyPress:
-            logger.debug(f'{event.key()}')
-            #if event.key() == Qt.Key_Up or event.key() == Qt.Key_Down:
-            #    GlobalEventFilter.eventFilter(self, obj, event)
             if event.key() == Qt.Key_Return:
                 self.main.ui_btn_add_new_message_clicked()
             elif event.key() == Qt.Key_Escape:
@@ -174,7 +171,7 @@ class Main:
     def __init__(self):
         self.appctxt = ApplicationContext()
 
-        ui_file_name = "ui/mainwindow.ui"
+        ui_file_name = "src/main/python/ui/mainwindow.ui"
         ui_file = QFile(ui_file_name)
         if not ui_file.open(QIODevice.ReadOnly):
             logger.error("Cannot open {}: {}".format(ui_file_name, ui_file.errorString()))
@@ -239,7 +236,7 @@ class Main:
         self.ui_btn_shape_polygon: QPushButton = self.window.findChild(QPushButton, 'btn_shape_polygon')
         self.ui_btn_shape_line: QPushButton = self.window.findChild(QPushButton, 'btn_shape_line')
 
-        self.ui_web_json_shape: QWebEngineView = self.window.findChild(QWebEngineView, 'web_json_shape')
+        self.ui_text_json_shape: QTextEdit = self.window.findChild(QTextEdit, 'text_json_shape')
 
         self.ui_list_timeline: QListWidget = self.window.findChild(QListWidget, 'list_timeline')
         self.ui_btn_edit_timeline: QPushButton = self.window.findChild(QPushButton, 'btn_edit_timeline')
@@ -534,7 +531,7 @@ class Main:
             self.videostream.remove_drawing_shape('drawing_shape')
             self.drawing_shape = None
             self.hide_pointer(refresh=False)
-            self.ui_web_json_shape.setHtml('')
+            self.ui_text_json_shape.setHtml('')
             if refresh:
                 self.videostream.refresh()
         self.update_btn_create_event()
@@ -542,7 +539,7 @@ class Main:
     def update_shape(self, refresh=True):
         if self.drawing_shape is not None:
             self.videostream.add_drawing_shape(self.drawing_shape)
-            self.ui_web_json_shape.setHtml(json_to_html(self.drawing_shape.to_json(hide_id=True)))
+            self.ui_text_json_shape.setHtml(json_to_html(self.drawing_shape.to_json(hide_id=True)))
             if refresh:
                 self.videostream.refresh()
             self.update_btn_create_event()
