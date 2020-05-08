@@ -74,10 +74,19 @@ def reader(conn_player: connection.Connection, filename, container_width, contai
         cache = dict()
         shapes = dict()
         drawing_shapes = []
+        highlight_shape = None
+        highlight_color = None
 
         def get_modifier(shape: Shape):
-            color = shape.color
-            last_color = shape.last_color
+            if highlight_shape == shape.id:
+                color = highlight_color
+                if shape.color == shape.last_color:
+                    last_color = highlight_color
+                else:
+                    last_color = shape.last_color
+            else:
+                color = shape.color
+                last_color = shape.last_color
 
             def mask_negative(frame, mask):
                 negative = frame.copy()
@@ -236,11 +245,14 @@ def reader(conn_player: connection.Connection, filename, container_width, contai
                     for k in shapes:
                         shapes[k] = [m for m in shapes[k] if m.id != player_action['shape'].id]
                     shapes[index].append(player_action['shape'])
-                elif player_action['action'] == 'remove_shapes':
+                elif player_action['action'] == 'remove_shape':
                     for k in shapes:
                         shapes[k] = [m for m in shapes[k] if m.id != player_action['id']]
                 elif player_action['action'] == 'clear_shapes':
                     shapes.clear()
+                elif player_action['action'] == 'highlight_shape':
+                    highlight_shape = player_action['id']
+                    highlight_color = player_action['color']
                 elif player_action['action'] == 'add_drawing_shape':
                     drawing_shapes = [m for m in drawing_shapes if m.id != player_action['shape'].id]
                     drawing_shapes.append(player_action['shape'])
@@ -373,6 +385,8 @@ def player(conn_reader: connection.Connection, conn_ui: connection.Connection, c
                 elif action['action'] == 'remove_shape':
                     conn_reader.send(action)
                 elif action['action'] == 'clear_shapes':
+                    conn_reader.send(action)
+                elif action['action'] == 'highlight_shape':
                     conn_reader.send(action)
                 elif action['action'] == 'add_drawing_shape':
                     conn_reader.send(action)
@@ -577,6 +591,9 @@ class VideoStream(QObject):
 
     def remove_shape(self, id: str):
         self.__commands_pipe.send({'action': 'remove_shape', 'id': id})
+
+    def highlight_shape(self, id, color=(255, 255, 0)):
+        self.__commands_pipe.send({'action': 'highlight_shape', 'id': id, 'color': color})
 
     def add_shape(self, frame_index, shape: Shape):
         self.__commands_pipe.send({'action': 'add_shape', 'index': frame_index, 'shape': shape})

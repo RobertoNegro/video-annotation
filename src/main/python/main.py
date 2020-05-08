@@ -192,6 +192,7 @@ class Main:
         self.ui_btn_shape_line.clicked.connect(self.ui_btn_shape_line_clicked)
 
         self.ui_btn_add_new_message.clicked.connect(self.ui_btn_add_new_message_clicked)
+        self.ui_edit_new_message.returnPressed.connect(self.ui_btn_add_new_message_clicked)
         self.ui_btn_remove_message.clicked.connect(self.ui_btn_remove_message_clicked)
         self.ui_btn_edit_message.clicked.connect(self.ui_btn_edit_message_clicked)
 
@@ -201,6 +202,8 @@ class Main:
         self.ui_list_messages.itemSelectionChanged.connect(self.ui_list_messages_item_changed)
 
         self.ui_list_timeline.itemSelectionChanged.connect(self.ui_list_timeline_item_changed)
+        self.ui_btn_edit_timeline.clicked.connect(self.ui_btn_edit_timeline_clicked)
+        self.ui_btn_delete_timeline.clicked.connect(self.ui_btn_delete_timeline_clicked)
 
         QPixmapCache.setCacheLimit(1024 * 1024 * 1024)
 
@@ -213,23 +216,58 @@ class Main:
         exit_code = self.appctxt.app.exec_()
         sys.exit(exit_code)
 
+    def ui_btn_edit_timeline_clicked(self):
+        deleted = self.delete_selected_list_timeline()
+        if deleted is not None:
+            frame, shape = deleted
+            shape.id = 'drawing_shape'
+            shape.color = (0, 0, 255)
+            shape.last_color = (0, 255, 255)
+            self.reset_shape(refresh=False)
+            self.drawing_shape = shape
+            self.update_shape()
+
+    def ui_btn_delete_timeline_clicked(self):
+        self.delete_selected_list_timeline()
+
+    def delete_selected_list_timeline(self):
+        selected = self.list_timeline_get_selected()
+        if selected is not None:
+            index, frame, shape = selected
+            self.videostream.remove_shape(shape.id)
+            self.videostream.refresh()
+            del self.timeline[index]
+            self.update_list_timeline()
+            return frame, shape
+        return None
+
+    def deselect_list_timeline(self):
+        for i in range(self.ui_list_timeline.count()):
+            item = self.ui_list_timeline.item(i)
+            self.ui_list_timeline.setItemSelected(item, False)
+
     def list_timeline_get_selected(self):
         selected_indexes = self.ui_list_timeline.selectedIndexes()
         if selected_indexes:
             for i in selected_indexes:
-                return self.timeline[i.row()]
+                return (i.row(),) + self.timeline[i.row()]
+        return None
 
     def update_list_timeline(self):
         self.ui_list_timeline.clear()
         for (frame, shape) in self.timeline:
-            self.ui_list_timeline.addItem(f'{frame} - {shape.message} ({shape.shape})')
+            self.ui_list_timeline.addItem(f'{frame + 1} - {shape.message} ({shape.shape})')
 
     def ui_list_timeline_item_changed(self):
-        frame, shape = self.list_timeline_get_selected()
-
-        if self.videostream:
-            self.videostream.skip_to(frame)
-            self.force_update_timeline_slider = True
+        selected = self.list_timeline_get_selected()
+        if selected is not None:
+            i, frame, shape = selected
+            if self.videostream:
+                self.videostream.highlight_shape(shape.id, (255, 255, 0))
+                self.skip_to(frame)
+        else:
+            self.videostream.highlight_shape(None)
+            self.videostream.refresh()
 
     def update_btn_create_event(self):
         self.ui_btn_create_event.setEnabled(self.videostream is not None and
@@ -266,7 +304,21 @@ class Main:
         self.ui_btn_add_new_message.setEnabled(len(message) > 0)
 
     def add_message_to_list(self, message):
-        self.ui_list_messages.addItem(message)
+        found = None
+        for i in range(self.ui_list_messages.count()):
+            temp_message = self.ui_list_messages.item(i)
+            if temp_message.text() == message:
+                found = temp_message
+
+        if found is None:
+            self.ui_list_messages.addItem(message)
+            for i in range(self.ui_list_messages.count()):
+                temp_message = self.ui_list_messages.item(i)
+                if temp_message.text() == message:
+                    self.ui_list_messages.setCurrentItem(temp_message)
+                    break
+        else:
+            self.ui_list_messages.setCurrentItem(found)
 
     def remove_selected_message_from_list(self):
         selected_items = self.ui_list_messages.selectedItems()
@@ -356,11 +408,13 @@ class Main:
 
     def pause(self):
         if self.videostream:
+            self.deselect_list_timeline()
             self.videostream.pause()
             self.ui_btn_play.setText('Play')
 
     def play(self):
         if self.videostream:
+            self.deselect_list_timeline()
             self.hide_pointer()
             self.videostream.play()
             self.ui_btn_play.setText('Pause')
@@ -428,13 +482,22 @@ class Main:
 
     def add_frames(self, frames):
         if self.videostream:
+            self.deselect_list_timeline()
             self.videostream.add_frames(frames)
             self.force_update_timeline_slider = True
 
     def add_seconds(self, seconds):
         if self.videostream:
+            self.deselect_list_timeline()
             self.videostream.add_seconds(seconds)
             self.force_update_timeline_slider = True
+
+    def skip_to(self, frame):
+        if self.videostream:
+            self.videostream.skip_to(frame)
+            self.force_update_timeline_slider = True
+            if self.videostream.playing:
+                self.deselect_list_timeline()
 
     def ui_slider_speed_valueChanged(self):
         if self.videostream:
