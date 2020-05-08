@@ -1,5 +1,5 @@
 {
-    "app_name": "video-annotation",
+    "app_name": "VideoAnnotation",
     "author": "Roberto Negro",
     "main_module": "src/main/python/main.py",
     "version": "0.0.0",
