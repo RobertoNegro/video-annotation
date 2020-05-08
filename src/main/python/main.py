@@ -1,10 +1,11 @@
+import json
 import logging
 import uuid
 from threading import RLock
 
 from PySide2.QtWebEngineWidgets import QWebEngineView
 
-from PySide2.QtCore import QFile, QIODevice, QEvent, QObject, Qt
+from PySide2.QtCore import QFile, QIODevice, QEvent, QObject, Qt, QDir
 from PySide2.QtGui import QPixmapCache
 from PySide2.QtWidgets import QFileDialog, QLabel, QAction, QSlider, QPushButton, QGroupBox, QGraphicsView, QListWidget, \
     QLineEdit
@@ -18,6 +19,89 @@ from classes.Utils import json_to_html
 from classes.Shape import Shape, ShapeType
 
 logger = logging.getLogger('Main')
+
+
+class EditNewMessageFilter(QObject):
+    def __init__(self, parent, main):
+        super().__init__(parent)
+        self.main = main
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.KeyPress:
+            logger.debug(f'{event.key()}')
+            #if event.key() == Qt.Key_Up or event.key() == Qt.Key_Down:
+            #    GlobalEventFilter.eventFilter(self, obj, event)
+            if event.key() == Qt.Key_Return:
+                self.main.ui_btn_add_new_message_clicked()
+            elif event.key() == Qt.Key_Escape:
+                self.main.ui_edit_new_message.clearFocus()
+            else:
+                return QLineEdit.eventFilter(self, obj, event)
+            return True
+        return QLineEdit.eventFilter(self, obj, event)
+
+
+class GlobalEventFilter(QObject):
+    def __init__(self, parent, main):
+        super().__init__(parent)
+        self.main = main
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.KeyPress:
+            if event.key() == Qt.Key_Up:
+                if event.modifiers() & Qt.ShiftModifier == Qt.ShiftModifier:
+                    self.main.ui_edit_new_message.setFocus()
+                else:
+                    self.main.select_prev_message()
+                return True
+            if event.key() == Qt.Key_Down:
+                if event.modifiers() & Qt.ShiftModifier == Qt.ShiftModifier:
+                    self.main.ui_edit_new_message.setFocus()
+                else:
+                    self.main.select_next_message()
+                return True
+            if not hasattr(self.main, 'ui_edit_new_message') or not self.main.ui_edit_new_message.hasFocus():
+                if event.key() == Qt.Key_Return:
+                    self.main.ui_btn_create_event_clicked()
+                    return True
+                if event.key() == Qt.Key_Escape:
+                    if not self.main.videostream.playing:
+                        self.main.reset_shape()
+                    return True
+                if event.key() == Qt.Key_G:
+                    self.main.ui_btn_shape_global_clicked()
+                    return True
+                if event.key() == Qt.Key_R:
+                    self.main.ui_btn_shape_rectangle_clicked()
+                    return True
+                if event.key() == Qt.Key_E:
+                    self.main.ui_btn_shape_ellipse_clicked()
+                    return True
+                if event.key() == Qt.Key_P:
+                    self.main.ui_btn_shape_polygon_clicked()
+                    return True
+                if event.key() == Qt.Key_L:
+                    self.main.ui_btn_shape_line_clicked()
+                    return True
+                if event.key() == Qt.Key_Space:
+                    if self.main.videostream.playing:
+                        self.main.pause()
+                    else:
+                        self.main.play()
+                    return True
+                if event.key() == Qt.Key_Right:
+                    if self.main.videostream.playing:
+                        self.main.ui_btn_add5sec_clicked()
+                    else:
+                        self.main.ui_btn_add1frame_clicked()
+                    return True
+                if event.key() == Qt.Key_Left:
+                    if self.main.videostream.playing:
+                        self.main.ui_btn_rem5sec_clicked()
+                    else:
+                        self.main.ui_btn_rem1frame_clicked()
+                    return True
+        return False
 
 
 class VideoEventFilter(QObject):
@@ -102,6 +186,9 @@ class Main:
             logger.error(loader.errorString())
             sys.exit(-1)
 
+        self.window_filter = GlobalEventFilter(self.appctxt.app, self)
+        self.appctxt.app.installEventFilter(self.window_filter)
+
         self.videostream: VideoStream = None
 
         self.draw_mutex = RLock()
@@ -123,6 +210,9 @@ class Main:
         self.ui_lbl_video.installEventFilter(self.video_filter)
 
         self.ui_action_load_video: QAction = self.window.findChild(QAction, 'action_load_video')
+        self.ui_action_load_annotations: QAction = self.window.findChild(QAction, 'action_load_annotations')
+        self.ui_action_save_annotations: QAction = self.window.findChild(QAction, 'action_save_annotations')
+
         self.ui_slider_speed: QSlider = self.window.findChild(QSlider, 'slider_speed')
         self.ui_lbl_speed: QLabel = self.window.findChild(QLabel, 'lbl_speed')
         self.ui_btn_play: QPushButton = self.window.findChild(QPushButton, 'btn_play')
@@ -166,7 +256,13 @@ class Main:
         self.ui_btn_add_new_message.setEnabled(False)
         self.ui_edit_new_message.textChanged.connect(self.ui_edit_new_message_text_changed)
 
+        self.edit_new_message_filter = EditNewMessageFilter(self.ui_edit_new_message, self)
+        self.ui_edit_new_message.installEventFilter(self.edit_new_message_filter)
+
         self.ui_action_load_video.triggered.connect(self.ui_action_load_video_triggered)
+        self.ui_action_load_annotations.triggered.connect(self.ui_action_load_annotations_triggered)
+        self.ui_action_save_annotations.triggered.connect(self.ui_action_save_annotations_triggered)
+
         self.ui_slider_speed.valueChanged.connect(self.ui_slider_speed_valueChanged)
         self.ui_btn_play.clicked.connect(self.ui_btn_play_clicked)
         self.ui_btn_add5sec.clicked.connect(self.ui_btn_add5sec_clicked)
@@ -192,7 +288,6 @@ class Main:
         self.ui_btn_shape_line.clicked.connect(self.ui_btn_shape_line_clicked)
 
         self.ui_btn_add_new_message.clicked.connect(self.ui_btn_add_new_message_clicked)
-        self.ui_edit_new_message.returnPressed.connect(self.ui_btn_add_new_message_clicked)
         self.ui_btn_remove_message.clicked.connect(self.ui_btn_remove_message_clicked)
         self.ui_btn_edit_message.clicked.connect(self.ui_btn_edit_message_clicked)
 
@@ -211,7 +306,7 @@ class Main:
 
         self.window.show()
 
-        self.load_video("/Users/robertonegro/Desktop/UniTN/Fundamentals of Image and Video Processing/video.mp4")
+        # self.load_video("/Users/robertonegro/Desktop/video.mp4")
 
         exit_code = self.appctxt.app.exec_()
         sys.exit(exit_code)
@@ -229,6 +324,12 @@ class Main:
 
     def ui_btn_delete_timeline_clicked(self):
         self.delete_selected_list_timeline()
+
+    def clear_timeline(self):
+        if self.videostream is not None:
+            self.videostream.clear_shapes()
+        self.timeline.clear()
+        self.update_list_timeline()
 
     def delete_selected_list_timeline(self):
         selected = self.list_timeline_get_selected()
@@ -263,16 +364,53 @@ class Main:
         if selected is not None:
             i, frame, shape = selected
             if self.videostream:
-                self.videostream.highlight_shape(shape.id, (255, 255, 0))
+                self.videostream.highlight_shape(shape.id)
+                self.pause()
                 self.skip_to(frame)
         else:
             self.videostream.highlight_shape(None)
             self.videostream.refresh()
+        self.ui_lbl_video.setFocus()
 
     def update_btn_create_event(self):
         self.ui_btn_create_event.setEnabled(self.videostream is not None and
                                             self.drawing_shape is not None and
                                             self.drawing_shape.valid and len(self.ui_list_messages.selectedItems()) > 0)
+
+    def get_selected_message_index(self):
+        selected_indexes = self.ui_list_messages.selectedIndexes()
+        if selected_indexes:
+            for i in selected_indexes:
+                return i.row()
+        return None
+
+    def select_next_message(self):
+        if self.ui_list_messages.count() > 0:
+            index = self.get_selected_message_index()
+            if index is not None:
+                index += 1
+                if index > self.ui_list_messages.count() - 1:
+                    self.ui_edit_new_message.setFocus()
+                index = min(index, self.ui_list_messages.count() - 1)
+            else:
+                index = self.ui_list_messages.count() - 1
+            self.ui_list_messages.setCurrentItem(self.ui_list_messages.item(index))
+        else:
+            self.ui_edit_new_message.setFocus()
+
+    def select_prev_message(self):
+        if self.ui_list_messages.count() > 0:
+            index = self.get_selected_message_index()
+            if index is not None:
+                index -= 1
+                if index < 0:
+                    self.ui_edit_new_message.setFocus()
+                index = max(index, 0)
+            else:
+                index = 0
+            self.ui_list_messages.setCurrentItem(self.ui_list_messages.item(index))
+        else:
+            self.ui_edit_new_message.setFocus()
 
     def ui_list_messages_item_changed(self):
         message = self.get_selected_message()
@@ -280,17 +418,21 @@ class Main:
             self.drawing_shape.message = message
             self.update_shape()
         self.update_btn_create_event()
+        self.ui_lbl_video.setFocus()
 
     def ui_btn_create_event_clicked(self):
         if self.videostream is not None and self.drawing_shape is not None and self.drawing_shape.valid and len(
                 self.ui_list_messages.selectedItems()) > 0:
-            self.drawing_shape.id = uuid.uuid1()
+            self.pause()
+            self.drawing_shape.id = uuid.uuid1().hex
             self.drawing_shape.color = (255, 0, 0)
             self.drawing_shape.last_color = (255, 0, 0)
             self.videostream.add_shape(self.videostream.current_frame, self.drawing_shape)
             self.timeline.append((self.videostream.current_frame, self.drawing_shape))
             self.update_list_timeline()
             self.reset_shape()
+        elif self.drawing_shape is not None and self.drawing_shape.valid:
+            self.ui_edit_new_message.setFocus()
 
     def get_selected_message(self):
         selected_items = self.ui_list_messages.selectedItems()
@@ -302,6 +444,9 @@ class Main:
     def ui_edit_new_message_text_changed(self):
         message = self.ui_edit_new_message.text().strip()
         self.ui_btn_add_new_message.setEnabled(len(message) > 0)
+
+    def clear_messages(self):
+        self.ui_list_messages.clear()
 
     def add_message_to_list(self, message):
         found = None
@@ -319,6 +464,7 @@ class Main:
                     break
         else:
             self.ui_list_messages.setCurrentItem(found)
+        self.ui_lbl_video.setFocus()
 
     def remove_selected_message_from_list(self):
         selected_items = self.ui_list_messages.selectedItems()
@@ -357,12 +503,12 @@ class Main:
 
     def reset_shape(self, refresh=True):
         if self.videostream:
-            if self.drawing_shape is not None:
-                self.videostream.remove_drawing_shape('drawing_shape')
-                self.drawing_shape = None
-                self.ui_web_json_shape.setHtml('')
-                if refresh:
-                    self.videostream.refresh()
+            self.videostream.remove_drawing_shape('drawing_shape')
+            self.drawing_shape = None
+            self.hide_pointer(refresh=False)
+            self.ui_web_json_shape.setHtml('')
+            if refresh:
+                self.videostream.refresh()
         self.update_btn_create_event()
 
     def update_shape(self, refresh=True):
@@ -371,9 +517,9 @@ class Main:
             self.ui_web_json_shape.setHtml(json_to_html(self.drawing_shape.to_json(hide_id=True)))
             if refresh:
                 self.videostream.refresh()
+            self.update_btn_create_event()
         else:
-            self.ui_web_json_shape.setHtml('')
-        self.update_btn_create_event()
+            self.reset_shape(refresh)
 
     def draw_shape(self, shape_type, refresh=True):
         if self.videostream:
@@ -408,7 +554,6 @@ class Main:
 
     def pause(self):
         if self.videostream:
-            self.deselect_list_timeline()
             self.videostream.pause()
             self.ui_btn_play.setText('Play')
 
@@ -506,45 +651,105 @@ class Main:
             self.ui_lbl_speed.setText(f'{speed}x')
             self.videostream.speed(speed)
 
-    def on_frame_drawn(self, frame, index):
+    def on_frame_drawn(self, frame, current_frame, total_frames, current_timestamp, total_timestamp, playing):
         self.draw_mutex.acquire()
 
-        if self.videostream.playing or self.force_update_timeline_slider:
+        if playing or self.force_update_timeline_slider:
             if self.force_update_timeline_slider:
                 self.force_update_timeline_slider = False
-            self.ui_slider_timeline.setValue(self.videostream.current_frame)
-        self.ui_grp_time.setTitle(f'Time: {self.videostream.current_timestamp} / {self.videostream.total_timestamp}')
-        self.ui_grp_frame.setTitle(f'Frame: {self.videostream.current_frame + 1} / {self.videostream.total_frames}')
+            self.ui_slider_timeline.setValue(current_frame)
+        self.ui_grp_time.setTitle(f'Time: {current_timestamp} / {total_timestamp}')
+        self.ui_grp_frame.setTitle(f'Frame: {current_frame + 1} / {total_frames}')
 
         self.ui_lbl_video.setPixmap(frame)
 
         if self.drawing_shape is not None:
-            self.drawing_shape.frame = self.videostream.current_frame + 1
+            self.drawing_shape.frame = current_frame + 1
 
-        self.ui_slider_timeline.setMaximum(self.videostream.total_frames - 1)
+        self.ui_slider_timeline.setMaximum(total_frames - 1)
         self.ui_slider_timeline.setEnabled(True)
 
         self.draw_mutex.release()
 
+    def ui_action_save_annotations_triggered(self):
+        if self.videostream is not None:
+            self.pause()
+            filename, file_filter = QFileDialog.getSaveFileName(parent=self.window,
+                                                                caption='Save annotations',
+                                                                dir=QDir.homePath(),
+                                                                filter='JSON Files (*.json)')
+            if filename:
+                t = [shape.to_save_format(frame) for (frame, shape) in self.timeline]
+                j = json.dumps(t, indent=2)
+                with open(filename, 'w') as f:
+                    f.write(j)
+
+    def ui_action_load_annotations_triggered(self):
+        if self.videostream is not None:
+            self.pause()
+            filename, file_filter = QFileDialog.getOpenFileName(parent=self.window,
+                                                                caption='Open annotations',
+                                                                dir=QDir.homePath(),
+                                                                filter='JSON Files (*.json)')
+            if filename:
+                self.clear_shapes_and_messages()
+                with open(filename) as f:
+                    loaded_data = json.load(f)
+                    new_messages = []
+                    new_timeline = []
+                    shapes = []
+
+                    for t in loaded_data:
+                        frame = t['frame']
+                        shape = Shape.from_save_format(t)
+
+                        new_timeline.append((frame, shape))
+
+                        if shape.message not in new_messages:
+                            new_messages.append(shape.message)
+
+                        shapes.append((frame, shape))
+                    self.videostream.set_shapes(shapes)
+                    for m in new_messages:
+                        self.add_message_to_list(m)
+
+                    self.timeline = new_timeline
+                    self.update_list_timeline()
+                    self.videostream.refresh()
+
     def ui_action_load_video_triggered(self):
         filename, file_filter = QFileDialog.getOpenFileName(parent=self.window,
                                                             caption='Open file',
-                                                            dir='.',
+                                                            dir=QDir.homePath(),
                                                             filter='Movie Files (*.mp4)')
 
         if filename:
             self.load_video(filename)
 
+    def clear_shapes_and_messages(self):
+        self.reset_shape(refresh=False)
+        self.clear_messages()
+        self.clear_timeline()
+
     def load_video(self, filename):
-        self.videostream = VideoStream()
-        self.videostream.start(filename,
-                               self.ui_lbl_video.frameGeometry().width(), self.ui_lbl_video.frameGeometry().height())
-        self.videostream.draw_frame_signal.connect(self.on_frame_drawn)
+        if self.videostream is not None and not self.videostream.is_destroyed:
+            self.clear_shapes_and_messages()
 
-        self.ui_slider_speed.setValue(4)
-        self.ui_slider_speed.setEnabled(True)
+            def after_destroying():
+                self.videostream.destroyed.disconnect(after_destroying)
+                self.load_video(filename)
+            self.videostream.destroyed.connect(after_destroying)
+            self.videostream.destroy()
+        else:
+            self.videostream = VideoStream()
+            self.videostream.start(filename,
+                                   self.ui_lbl_video.frameGeometry().width(), self.ui_lbl_video.frameGeometry().height())
+            self.videostream.draw_frame_signal.connect(self.on_frame_drawn)
 
-        self.play()
+            self.ui_slider_speed.setValue(4)
+            self.ui_slider_speed.setEnabled(True)
+
+            self.play()
 
     def about_to_quit(self):
         if self.videostream:

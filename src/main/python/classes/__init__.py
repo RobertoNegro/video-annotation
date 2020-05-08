@@ -44,3 +44,4 @@ level_styles = dict(
 add_logging_event('PLAYER', 2)
 add_logging_event('RENDER', 1)
 coloredlogs.install(level=logging.DEBUG, milliseconds=True, level_styles=level_styles)
+

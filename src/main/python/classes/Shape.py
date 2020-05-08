@@ -1,5 +1,6 @@
 import enum
 import json
+import uuid
 
 
 class ShapeType:
@@ -121,3 +122,25 @@ class Shape:
         if len(structure['points']) == 0:
             del structure['points']
         return json.dumps(structure, indent=indent, sort_keys=True)
+
+    @staticmethod
+    def from_save_format(entry):
+        if 'shape' in entry:
+            shape = Shape(uuid.uuid1().hex, entry['shape'])
+            if 'points' in entry and len(entry['points']) > 0:
+                for (x, y) in entry['points']:
+                    shape.add_point(x, y)
+            if 'message' in entry:
+                shape.message = entry['message']
+
+            return shape
+        return None
+
+    def to_save_format(self, frame):
+        structure = self.__structure.copy()
+
+        del structure['id']
+        if len(structure['points']) == 0:
+            del structure['points']
+        structure['frame'] = frame
+        return structure

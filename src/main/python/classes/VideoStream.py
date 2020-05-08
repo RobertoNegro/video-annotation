@@ -238,6 +238,15 @@ def reader(conn_player: connection.Connection, filename, container_width, contai
                 elif player_action['action'] == 'gc':
                     if player_action['index'] in cache:
                         del cache[player_action['index']]
+                elif player_action['action'] == 'set_shapes':
+                    shapes.clear()
+                    new_shapes = player_action['shapes']
+                    for (index, shape) in new_shapes:
+                        if index not in shapes:
+                            shapes[index] = []
+                        # for k in shapes:
+                        #     shapes[k] = [m for m in shapes[k] if m.id != shape.id]
+                        shapes[index].append(shape)
                 elif player_action['action'] == 'add_shape':
                     index = player_action['index']
                     if index not in shapes:
@@ -294,6 +303,7 @@ def reader(conn_player: connection.Connection, filename, container_width, contai
                     # logger.render(f'Frame {index} cached ({len(cache)})')
                     index += 1
 
+        conn_player.send({'action': 'ENDED'})
         conn_player.close()
     except Exception as e:
         logger.error(f'Error: {e}')
@@ -379,10 +389,11 @@ def player(conn_reader: connection.Connection, conn_ui: connection.Connection, c
                     })
                     render_time = 0
                     cache.clear()
-                    skipping = True
                 elif action['action'] == 'add_shape':
                     conn_reader.send(action)
                 elif action['action'] == 'remove_shape':
+                    conn_reader.send(action)
+                elif action['action'] == 'set_shapes':
                     conn_reader.send(action)
                 elif action['action'] == 'clear_shapes':
                     conn_reader.send(action)
@@ -399,19 +410,34 @@ def player(conn_reader: connection.Connection, conn_ui: connection.Connection, c
                     conn_ui.send({'action': 'END'})
                     terminate = True
 
+            # refresh
+            if not terminate:
+                last_index_with_current_index = max([index for index, cached in enumerate(cache) if cached['index'] == current_index] + [-1])
+                if last_index_with_current_index >= 0:
+                    skipping = False
+                    cache = cache[last_index_with_current_index:]
+                    cached = cache.pop(0)
+                    conn_ui.send(cached)
+
             if not terminate and len(cache) > 0 and (skipping or (playing and time.time() - render_time >= interval)):
                 render_time = time.time()
                 cached = cache.pop(0)
-                if not skipping or cached['index'] == current_index:
-                    if skipping:
-                        skipping = False
-                    else:
+                if not skipping and current_index + 1 == cached['index'] or skipping and current_index == cached['index']:
+                    skipping = False
+                    if current_index != cached['index']:
                         conn_reader.send({
                             'action': 'gc',
                             'index': current_index,
                         })
                     conn_ui.send(cached)
                     current_index = cached['index']
+
+        while True:
+            action = conn_reader.recv()
+            if action['action'] == 'ENDED':
+                logger.player(f'Action reader -> player: {action}')
+                break
+        conn_ui.send({'action': 'ENDED'})
 
         conn_ui.close()
         conn_command.close()
@@ -430,22 +456,28 @@ class VideoStream(QObject):
         seconds = math.floor(frame / fps) - hours * 60 * 60 - minutes * 60
         return f'{hours:02d}:{minutes:02d}:{seconds:02d}'
 
-    draw_frame_signal = Signal(QPixmap, int)
+    draw_frame_signal = Signal(QPixmap, int, int, str, str, bool)
+    destroyed = Signal()
     container_resized_signal = Signal(QPixmap, int)
 
     def __init__(self):
         super(VideoStream, self).__init__()
-        self.__fps = None
-        self.__width = None
-        self.__height = None
-        self.__resized_width = None
-        self.__resized_height = None
-        self.__container_width = None
-        self.__container_height = None
+        self.__destroyed = False
+        self.__fps = 0
+        self.__width = 1
+        self.__height = 1
+        self.__resized_width = 1
+        self.__resized_height = 1
+        self.__container_width = 1
+        self.__container_height = 1
         self.__playing = False
-        self.__current_frame = None
-        self.__total_frames = None
+        self.__current_frame = 0
+        self.__total_frames = 0
         self.__commands_pipe: connection.Connection = None
+
+    @property
+    def is_destroyed(self):
+        return self.__destroyed
 
     @property
     def fps(self):
@@ -493,11 +525,22 @@ class VideoStream(QObject):
             logger.render(f'Action player -> ui: {tmp}')
 
             if action['action'] == 'END':
+                self.__destroyed = True
+                self.__fps = 0
+                self.__width = 1
+                self.__height = 1
+                self.__resized_width = 1
+                self.__resized_height = 1
+                self.__container_width = 1
+                self.__container_height = 1
+                self.__playing = False
+                self.__current_frame = 0
+                self.__total_frames = 0
                 terminate = True
             elif action['action'] == 'frame':
-                self.__current_frame = action['index']
-                self.draw_frame_signal.emit(QPixmap.fromImage(qimage2ndarray.array2qimage(action['frame'])),
-                                            action['index'])
+                if action['index'] is not None and action['frame'] is not None:
+                    self.__current_frame = action['index']
+                    self.draw_frame_signal.emit(QPixmap.fromImage(qimage2ndarray.array2qimage(action['frame'])), self.current_frame, self.total_frames, self.current_timestamp, self.total_timestamp, self.playing)
             elif action['action'] == 'metadata':
                 self.__fps = action['fps']
                 self.__width = action['width']
@@ -508,38 +551,45 @@ class VideoStream(QObject):
                 self.__container_width = action['container_width']
                 self.__container_height = action['container_height']
 
+        while True:
+            action = conn_player.recv()
+            if action['action'] == 'ENDED':
+                logger.render(f'Action player -> ui: {action}')
+                break
+        self.destroyed.emit()
         conn_player.close()
 
     def start(self, filename: str, container_width, container_height, cache_size=100):
-        # creating a pipe
-        player_to_reader, reader_to_player = Pipe()
-        ui_to_player, player_to_ui = Pipe()
-        command_to_player, player_to_command = Pipe()
-        command_to_player, player_to_command = Pipe()
-        self.__commands_pipe = command_to_player
+        if not self.__destroyed:
+            # creating a pipe
+            player_to_reader, reader_to_player = Pipe()
+            ui_to_player, player_to_ui = Pipe()
+            command_to_player, player_to_command = Pipe()
+            self.__commands_pipe = command_to_player
 
-        container_width = int(container_width)
-        container_height = int(container_height)
+            container_width = int(container_width)
+            container_height = int(container_height)
 
-        # creating new processes
-        reader_process = Process(target=reader,
-                                 args=(reader_to_player, filename, container_width, container_height, cache_size))
-        player_process = Process(target=player, args=(player_to_reader, player_to_ui, player_to_command))
+            # creating new processes
+            reader_process = Process(target=reader,
+                                     args=(reader_to_player, filename, container_width, container_height, cache_size))
+            player_process = Process(target=player, args=(player_to_reader, player_to_ui, player_to_command))
 
-        # running processes
-        reader_process.start()
-        player_process.start()
+            # running processes
+            reader_process.start()
+            player_process.start()
 
-        thread_execution = Thread(target=self.__thread_execution, args=(ui_to_player,))
-        thread_execution.start()
+            thread_execution = Thread(target=self.__thread_execution, args=(ui_to_player,))
+            thread_execution.start()
 
     def __del__(self):
         self.destroy()
 
     def destroy(self):
-        if self.__commands_pipe is not None:
-            self.__commands_pipe.send({'action': 'END'})
-            self.__commands_pipe = None
+        if not self.__destroyed:
+            self.__destroyed = True
+            if self.__commands_pipe is not None:
+                self.__commands_pipe.send({'action': 'END'})
 
     def get_video_coord(self, container_x, container_y):
         # container_x -= (self.__container_width - self.__resized_width) / 2
@@ -561,48 +611,67 @@ class VideoStream(QObject):
         return int(x), int(y)
 
     def play(self):
-        self.__commands_pipe.send({'action': 'play'})
-        self.__playing = True
+        if not self.__destroyed and self.__commands_pipe is not None:
+            self.__commands_pipe.send({'action': 'play'})
+            self.__playing = True
 
     def pause(self):
-        self.__commands_pipe.send({'action': 'pause'})
-        self.__playing = False
+        if not self.__destroyed and self.__commands_pipe is not None:
+            self.__commands_pipe.send({'action': 'pause'})
+            self.__playing = False
 
     def speed(self, speed):
-        self.__commands_pipe.send({'action': 'speed', 'speed': speed})
+        if not self.__destroyed and self.__commands_pipe is not None:
+            self.__commands_pipe.send({'action': 'speed', 'speed': speed})
 
     def skip_to(self, index):
-        self.__commands_pipe.send({'action': 'skip_to', 'index': index})
+        if not self.__destroyed and self.__commands_pipe is not None:
+            self.__commands_pipe.send({'action': 'skip_to', 'index': index})
 
     def refresh(self):
-        self.__commands_pipe.send({'action': 'refresh'})
+        if not self.__destroyed and self.__commands_pipe is not None:
+            self.__commands_pipe.send({'action': 'refresh'})
 
     def resize(self, width, height):
-        self.__commands_pipe.send({'action': 'resize', 'width': width, 'height': height})
+        if not self.__destroyed and self.__commands_pipe is not None:
+            self.__commands_pipe.send({'action': 'resize', 'width': width, 'height': height})
 
     def add_seconds(self, seconds):
-        self.skip_to(int(max(min(self.current_frame + self.fps * seconds, self.total_frames - 1), 0)))
+        if not self.__destroyed and self.__commands_pipe is not None:
+            self.skip_to(int(max(min(self.current_frame + self.fps * seconds, self.total_frames - 1), 0)))
 
     def add_frames(self, frames):
-        self.skip_to(max(min(self.current_frame + frames, self.total_frames - 1), 0))
+        if not self.__destroyed and self.__commands_pipe is not None:
+            self.skip_to(max(min(self.current_frame + frames, self.total_frames - 1), 0))
 
     def clear_shapes(self):
-        self.__commands_pipe.send({'action': 'clear_shapes'})
+        if not self.__destroyed and self.__commands_pipe is not None:
+            self.__commands_pipe.send({'action': 'clear_shapes'})
+
+    def set_shapes(self, shapes: [(int, Shape)]):
+        if not self.__destroyed and self.__commands_pipe is not None:
+            self.__commands_pipe.send({'action': 'set_shapes', 'shapes': shapes})
 
     def remove_shape(self, id: str):
-        self.__commands_pipe.send({'action': 'remove_shape', 'id': id})
+        if not self.__destroyed and self.__commands_pipe is not None:
+            self.__commands_pipe.send({'action': 'remove_shape', 'id': id})
 
     def highlight_shape(self, id, color=(255, 255, 0)):
-        self.__commands_pipe.send({'action': 'highlight_shape', 'id': id, 'color': color})
+        if not self.__destroyed and self.__commands_pipe is not None:
+            self.__commands_pipe.send({'action': 'highlight_shape', 'id': id, 'color': color})
 
     def add_shape(self, frame_index, shape: Shape):
-        self.__commands_pipe.send({'action': 'add_shape', 'index': frame_index, 'shape': shape})
+        if not self.__destroyed and self.__commands_pipe is not None:
+            self.__commands_pipe.send({'action': 'add_shape', 'index': frame_index, 'shape': shape})
 
     def clear_drawing_shapes(self):
-        self.__commands_pipe.send({'action': 'clear_drawing_shapes'})
+        if not self.__destroyed and self.__commands_pipe is not None:
+            self.__commands_pipe.send({'action': 'clear_drawing_shapes'})
 
     def remove_drawing_shape(self, id: str):
-        self.__commands_pipe.send({'action': 'remove_drawing_shape', 'id': id})
+        if not self.__destroyed and self.__commands_pipe is not None:
+            self.__commands_pipe.send({'action': 'remove_drawing_shape', 'id': id})
 
     def add_drawing_shape(self, shape: Shape):
-        self.__commands_pipe.send({'action': 'add_drawing_shape', 'shape': shape})
+        if not self.__destroyed and self.__commands_pipe is not None:
+            self.__commands_pipe.send({'action': 'add_drawing_shape', 'shape': shape})
