@@ -772,7 +772,15 @@ color: rgb(255, 255, 255);</string>
     <addaction name="action_load_annotations"/>
     <addaction name="action_save_annotations"/>
    </widget>
+   <widget class="QMenu" name="menu_help">
+    <property name="title">
+     <string>Help</string>
+    </property>
+    <addaction name="action_help"/>
+    <addaction name="action_about"/>
+   </widget>
    <addaction name="menuFile"/>
+   <addaction name="menu_help"/>
   </widget>
   <action name="action_load_video">
    <property name="text">
@@ -787,6 +795,16 @@ color: rgb(255, 255, 255);</string>
   <action name="action_load_annotations">
    <property name="text">
     <string>Load annotations</string>
+   </property>
+  </action>
+  <action name="action_help">
+   <property name="text">
+    <string>Help</string>
+   </property>
+  </action>
+  <action name="action_about">
+   <property name="text">
+    <string>About</string>
    </property>
   </action>
  </widget>

@@ -8,7 +8,7 @@ from PySide2.QtWebEngineWidgets import QWebEngineView
 from PySide2.QtCore import QFile, QIODevice, QEvent, QObject, Qt, QDir
 from PySide2.QtGui import QPixmapCache
 from PySide2.QtWidgets import QFileDialog, QLabel, QAction, QSlider, QPushButton, QGroupBox, QGraphicsView, QListWidget, \
-    QLineEdit
+    QLineEdit, QMenu, QMessageBox
 from fbs_runtime.application_context.PySide2 import ApplicationContext
 from PySide2.QtUiTools import QUiLoader
 
@@ -253,6 +253,12 @@ class Main:
 
         self.ui_btn_create_event: QPushButton = self.window.findChild(QPushButton, 'btn_create_event')
 
+        self.ui_action_help: QAction = self.window.findChild(QAction, 'action_help')
+        self.ui_action_help.triggered.connect(self.show_help)
+
+        self.ui_action_about: QAction = self.window.findChild(QAction, 'action_about')
+        self.ui_action_about.triggered.connect(self.show_about)
+
         self.ui_btn_add_new_message.setEnabled(False)
         self.ui_edit_new_message.textChanged.connect(self.ui_edit_new_message_text_changed)
 
@@ -306,10 +312,32 @@ class Main:
 
         self.window.show()
 
-        # self.load_video("/Users/robertonegro/Desktop/video.mp4")
-
         exit_code = self.appctxt.app.exec_()
         sys.exit(exit_code)
+
+    def show_help(self):
+        msg_box = QMessageBox()
+        msg_box.setText("Keyboard shortcuts")
+        msg_box.setInformativeText("Up Arrow: Previous event message\n"
+                                   "Down Arrow: Next event message\n"
+                                   "Right Arrow: Next frame / forward 5 secs (if playing)\n"
+                                   "Left Arrow: Previous frame / backward 5 secs (if playing)\n"
+                                   "Shift + Up/Down Arrow: Insert new message\n"
+                                   "Escape: Clear the current drawing shape\n"
+                                   "Return: Create event\n"
+                                   "Space: Play / Pause\n"
+                                   "G: Global\n"
+                                   "R: Rectangle\n"
+                                   "E: Ellipse\n"
+                                   "P: Polygon\n"
+                                   "L: Line\n\nIn order to create a new event, you need to select a valid shape and a valid (non-empty) message.")
+        msg_box.exec_()
+
+    def show_about(self):
+        msg_box = QMessageBox()
+        msg_box.setText("Video Annotator")
+        msg_box.setInformativeText("Video Annotator is created by Roberto Negro as a course project for the course Fundamentals of Image and Video Processing at University of Trento (a.y. 2019/20). If needed, you can contact me via e-mail at roberto.negro@studenti.unitn.it")
+        msg_box.exec_()
 
     def ui_btn_edit_timeline_clicked(self):
         deleted = self.delete_selected_list_timeline()
