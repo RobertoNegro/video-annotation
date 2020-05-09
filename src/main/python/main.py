@@ -1,12 +1,13 @@
 import json
 import logging
 import uuid
+from pathlib import Path
 from threading import RLock
 
 from PySide2.QtCore import QFile, QIODevice, QEvent, QObject, Qt, QDir
 from PySide2.QtGui import QPixmapCache
-from PySide2.QtWidgets import QFileDialog, QLabel, QAction, QSlider, QPushButton, QGroupBox, QGraphicsView, QListWidget, \
-    QLineEdit, QMenu, QMessageBox, QTextEdit
+from PySide2.QtWidgets import QFileDialog, QLabel, QAction, QSlider, QPushButton, QGroupBox, QListWidget, QLineEdit, \
+    QMessageBox, QTextEdit, QStatusBar
 from fbs_runtime.application_context.PySide2 import ApplicationContext
 from PySide2.QtUiTools import QUiLoader
 
@@ -62,6 +63,10 @@ class GlobalEventFilter(QObject):
                 else:
                     self.main.select_next_message()
                 return True
+            if event.key() == Qt.Key_S:
+                if event.modifiers() & Qt.CTRL == Qt.CTRL:
+                    self.main.ui_action_save_annotations_triggered()
+                    return True
             if not hasattr(self.main, 'ui_edit_new_message') or not self.main.ui_edit_new_message.hasFocus():
                 if event.key() == Qt.Key_Return:
                     self.main.ui_btn_create_event_clicked()
@@ -192,6 +197,8 @@ class Main:
         self.appctxt.app.installEventFilter(self.window_filter)
 
         self.videostream: VideoStream = None
+        self.video_filename: str = ''
+        self.last_saved_annotations_path = None
 
         self.draw_mutex = RLock()
 
@@ -205,6 +212,8 @@ class Main:
 
         self.timeline = []
 
+        self.ui_status_bar: QStatusBar = self.window.findChild(QStatusBar, 'status_bar')
+
         self.ui_lbl_video: QLabel = self.window.findChild(QLabel, 'lbl_video')
         self.ui_lbl_video.setMouseTracking(True)
 
@@ -214,6 +223,7 @@ class Main:
         self.ui_action_load_video: QAction = self.window.findChild(QAction, 'action_load_video')
         self.ui_action_load_annotations: QAction = self.window.findChild(QAction, 'action_load_annotations')
         self.ui_action_save_annotations: QAction = self.window.findChild(QAction, 'action_save_annotations')
+        self.ui_action_save_annotations_as: QAction = self.window.findChild(QAction, 'action_save_annotations_as')
 
         self.ui_slider_speed: QSlider = self.window.findChild(QSlider, 'slider_speed')
         self.ui_lbl_speed: QLabel = self.window.findChild(QLabel, 'lbl_speed')
@@ -270,6 +280,7 @@ class Main:
         self.ui_action_load_video.triggered.connect(self.ui_action_load_video_triggered)
         self.ui_action_load_annotations.triggered.connect(self.ui_action_load_annotations_triggered)
         self.ui_action_save_annotations.triggered.connect(self.ui_action_save_annotations_triggered)
+        self.ui_action_save_annotations_as.triggered.connect(self.ui_action_save_annotations_as_triggered)
 
         self.ui_slider_speed.valueChanged.connect(self.ui_slider_speed_valueChanged)
         self.ui_btn_play.clicked.connect(self.ui_btn_play_clicked)
@@ -332,6 +343,7 @@ class Main:
                                    "R: Rectangle\n"
                                    "E: Ellipse\n"
                                    "P: Polygon\n"
+                                   "CMD/CTRL+S: Save annotations\n"
                                    "L: Line\n\nIn order to create a new event, you need to select a valid shape and a valid (non-empty) message.")
         msg_box.exec_()
 
@@ -701,18 +713,67 @@ class Main:
 
         self.draw_mutex.release()
 
+        if current_frame + 1 == total_frames:
+            self.pause()
+
+    def save_annotations(self, filename):
+        if self.videostream is not None and filename:
+            self.ui_status_bar.showMessage("Saving annotations...")
+            self.last_saved_annotations_path = filename
+            t = [shape.to_save_format(frame) for (frame, shape) in self.timeline]
+            j = json.dumps(t, indent=2)
+            with open(filename, 'w') as f:
+                f.write(j)
+            self.ui_status_bar.showMessage("Annotations saved!", 2000)
+
+    def load_annotations(self, filename):
+        if filename:
+            self.ui_status_bar.showMessage("Loading annotations...")
+            self.last_saved_annotations_path = filename
+            self.ui_list_timeline.itemSelectionChanged.disconnect(self.ui_list_timeline_item_changed)
+            self.clear_shapes_and_messages()
+            with open(filename) as f:
+                loaded_data = json.load(f)
+                new_messages = []
+                new_timeline = []
+                shapes = []
+
+                for t in loaded_data:
+                    frame = t['frame']
+                    shape = Shape.from_save_format(t)
+
+                    new_timeline.append((frame, shape))
+
+                    if shape.message not in new_messages:
+                        new_messages.append(shape.message)
+
+                    shapes.append((frame, shape))
+                self.videostream.set_shapes(shapes)
+                for m in new_messages:
+                    self.add_message_to_list(m)
+
+                self.timeline = new_timeline
+                self.update_list_timeline()
+                self.videostream.refresh()
+            self.ui_list_timeline.itemSelectionChanged.connect(self.ui_list_timeline_item_changed)
+            self.ui_status_bar.showMessage("Annotations loaded!", 2000)
+
     def ui_action_save_annotations_triggered(self):
+        if self.videostream is not None:
+            if self.last_saved_annotations_path is not None:
+                self.pause()
+                self.save_annotations(self.last_saved_annotations_path)
+            else:
+                self.ui_action_save_annotations_as_triggered()
+
+    def ui_action_save_annotations_as_triggered(self):
         if self.videostream is not None:
             self.pause()
             filename, file_filter = QFileDialog.getSaveFileName(parent=self.window,
                                                                 caption='Save annotations',
-                                                                dir=QDir.homePath(),
+                                                                dir=QDir.homePath() + '/' + self.video_filename + ('.' if len(self.video_filename) > 0 else '') + 'annotations.json',
                                                                 filter='JSON Files (*.json)')
-            if filename:
-                t = [shape.to_save_format(frame) for (frame, shape) in self.timeline]
-                j = json.dumps(t, indent=2)
-                with open(filename, 'w') as f:
-                    f.write(j)
+            self.save_annotations(filename)
 
     def ui_action_load_annotations_triggered(self):
         if self.videostream is not None:
@@ -721,37 +782,13 @@ class Main:
                                                                 caption='Open annotations',
                                                                 dir=QDir.homePath(),
                                                                 filter='JSON Files (*.json)')
-            if filename:
-                self.clear_shapes_and_messages()
-                with open(filename) as f:
-                    loaded_data = json.load(f)
-                    new_messages = []
-                    new_timeline = []
-                    shapes = []
-
-                    for t in loaded_data:
-                        frame = t['frame']
-                        shape = Shape.from_save_format(t)
-
-                        new_timeline.append((frame, shape))
-
-                        if shape.message not in new_messages:
-                            new_messages.append(shape.message)
-
-                        shapes.append((frame, shape))
-                    self.videostream.set_shapes(shapes)
-                    for m in new_messages:
-                        self.add_message_to_list(m)
-
-                    self.timeline = new_timeline
-                    self.update_list_timeline()
-                    self.videostream.refresh()
+            self.load_annotations(filename)
 
     def ui_action_load_video_triggered(self):
         filename, file_filter = QFileDialog.getOpenFileName(parent=self.window,
                                                             caption='Open file',
                                                             dir=QDir.homePath(),
-                                                            filter='Movie Files (*.mp4)')
+                                                            filter='Movie Files (*)')
 
         if filename:
             self.load_video(filename)
@@ -771,15 +808,21 @@ class Main:
             self.videostream.destroyed.connect(after_destroying)
             self.videostream.destroy()
         else:
-            self.videostream = VideoStream()
-            self.videostream.start(filename,
-                                   self.ui_lbl_video.frameGeometry().width(), self.ui_lbl_video.frameGeometry().height())
-            self.videostream.draw_frame_signal.connect(self.on_frame_drawn)
+            self.last_saved_annotations_path = None
+            self.video_filename = Path(filename).stem
+            if VideoStream.check_valid_video_file(filename):
+                self.videostream = VideoStream()
+                self.videostream.start(filename,
+                                       self.ui_lbl_video.frameGeometry().width(), self.ui_lbl_video.frameGeometry().height())
+                self.videostream.draw_frame_signal.connect(self.on_frame_drawn)
 
-            self.ui_slider_speed.setValue(4)
-            self.ui_slider_speed.setEnabled(True)
+                self.ui_slider_speed.setValue(4)
+                self.ui_slider_speed.setEnabled(True)
 
-            self.play()
+                self.play()
+            else:
+                self.ui_status_bar.showMessage("Invalid file", 3000)
+
 
     def about_to_quit(self):
         if self.videostream:

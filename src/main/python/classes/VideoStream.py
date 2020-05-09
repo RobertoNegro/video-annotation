@@ -450,6 +450,21 @@ class VideoStream(QObject):
     logger = logging.getLogger('VideoStream')
 
     @staticmethod
+    def check_valid_video_file(filename):
+        try:
+            video = cv2.VideoCapture(filename)
+            if not video.isOpened():
+                return False
+            frame_count = video.get(cv2.CAP_PROP_FRAME_COUNT)
+            if frame_count > 0:
+                return True
+            return False
+        except cv2.error as e:
+            return False
+        except Exception as e:
+            return False
+
+    @staticmethod
     def index_to_formatted_time(frame, fps):
         hours = math.floor(frame / fps / 60 / 60)
         minutes = math.floor(frame / fps / 60) - hours * 60

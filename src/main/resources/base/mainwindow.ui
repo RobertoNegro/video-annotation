@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1040</width>
-    <height>746</height>
+    <width>1110</width>
+    <height>767</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -15,7 +15,7 @@
   </property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QGridLayout" name="gridLayout_2">
-    <item row="0" column="1">
+    <item row="0" column="0">
      <layout class="QHBoxLayout" name="horizontalLayout_2">
       <item>
        <layout class="QVBoxLayout" name="verticalLayout">
@@ -511,7 +511,7 @@ color: rgb(255, 255, 255);</string>
       </item>
      </layout>
     </item>
-    <item row="6" column="1">
+    <item row="6" column="0">
      <layout class="QVBoxLayout" name="verticalLayout_6">
       <item>
        <layout class="QHBoxLayout" name="horizontalLayout_11">
@@ -747,7 +747,7 @@ color: rgb(255, 255, 255);</string>
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>1040</width>
+     <width>1110</width>
      <height>22</height>
     </rect>
    </property>
@@ -759,6 +759,7 @@ color: rgb(255, 255, 255);</string>
     <addaction name="separator"/>
     <addaction name="action_load_annotations"/>
     <addaction name="action_save_annotations"/>
+    <addaction name="action_save_annotations_as"/>
    </widget>
    <widget class="QMenu" name="menu_help">
     <property name="title">
@@ -770,6 +771,7 @@ color: rgb(255, 255, 255);</string>
    <addaction name="menuFile"/>
    <addaction name="menu_help"/>
   </widget>
+  <widget class="QStatusBar" name="status_bar"/>
   <action name="action_load_video">
    <property name="text">
     <string>Load video</string>
@@ -793,6 +795,11 @@ color: rgb(255, 255, 255);</string>
   <action name="action_about">
    <property name="text">
     <string>About</string>
+   </property>
+  </action>
+  <action name="action_save_annotations_as">
+   <property name="text">
+    <string>Save annotations as...</string>
    </property>
   </action>
  </widget>
