@@ -608,6 +608,7 @@ class Main:
 
     def ui_slider_timeline_sliderPressed(self):
         if self.videostream:
+            self.deselect_list_timeline()
             self.was_playing = self.videostream.playing
             self.pause()
 
