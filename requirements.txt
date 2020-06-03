@@ -1,0 +1,8 @@
+numpy==1.18.4
+Pygments==2.6.1
+coloredlogs==14.0
+PySide2==5.14.2.1
+opencv-python-headless==4.2.0.34
+qimage2ndarray==1.8.3
+fbs==0.8.6
+pyinstaller==3.4

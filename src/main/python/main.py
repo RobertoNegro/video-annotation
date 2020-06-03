@@ -19,13 +19,6 @@ from classes.Shape import Shape, ShapeType
 
 logger = logging.getLogger('Main')
 
-# DEPENDENCIES:
-# Python 3.6
-# pip install numpy Pygments coloredlogs PySide2 opencv-python-headless qimage2ndarray fbs pyinstaller==3.4
-
-# if "Can not find path ./libshiboken2.abi3.5.14.dylib" on freeze,
-# copy ~/.conda/envs/<YOUR_ENV>/lib/python3.6/site-packages/shiboken2/libshiboken2.abi3.5.14.dylib
-# to .../site-packages/PyInstaller/hooks/ and .../site-packages/PySide2/
 
 class EditNewMessageFilter(QObject):
     def __init__(self, parent, main):
