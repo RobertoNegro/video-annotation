@@ -1,5 +1,6 @@
 import json
 import logging
+import multiprocessing
 import uuid
 from pathlib import Path
 from threading import RLock
@@ -824,4 +825,5 @@ class Main:
 
 
 if __name__ == '__main__':
+    multiprocessing.freeze_support()
     Main()
