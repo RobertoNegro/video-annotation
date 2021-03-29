@@ -1,5 +1,5 @@
 numpy==1.18.4
-Pygments==2.6.1
+Pygments==2.7.4
 coloredlogs==14.0
 PySide2==5.14.2.1
 opencv-python-headless==4.2.0.34
